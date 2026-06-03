@@ -2,7 +2,7 @@
   "name": "memoryai-vsx",
   "displayName": "MemoryAI",
   "description": "One brain. Every AI you use. Forever. Shared long-term memory for Claude, Cursor, AI assistant, and any IDE that follows.",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "publisher": "memoryai",
   "homepage": "https://memoryai.dev",
   "repository": {
@@ -97,8 +97,15 @@
         "memoryai.statusBar": {
           "type": "string",
           "enum": ["off", "savings", "tokens", "compact", "full"],
-          "default": "savings",
-          "description": "Status-bar display format."
+          "default": "full",
+          "description": "Status-bar display format. full = brain size + monthly activity + savings (recommended). savings = $ saved today only. tokens = brain volume only. compact = monthly activity only. off = hide.",
+          "enumDescriptions": [
+            "Hide the status bar entirely.",
+            "$ saved today only.",
+            "Brain volume — total memories and storage.",
+            "This month's activity — stores and recalls.",
+            "Everything: memories · stores↑ recalls↓ · $ saved."
+          ]
         },
         "memoryai.debug.logLevel": {
           "type": "string",

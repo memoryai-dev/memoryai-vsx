@@ -46,7 +46,7 @@ export class Settings {
     }
 
     statusBar(): 'off' | 'savings' | 'tokens' | 'compact' | 'full' {
-        return this.cfg.get<'off' | 'savings' | 'tokens' | 'compact' | 'full'>('statusBar', 'savings');
+        return this.cfg.get<'off' | 'savings' | 'tokens' | 'compact' | 'full'>('statusBar', 'full');
     }
 
     logLevel(): 'off' | 'error' | 'warn' | 'info' | 'debug' | 'trace' {

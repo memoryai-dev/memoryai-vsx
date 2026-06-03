@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.8
+
+- Status bar now shows the full picture by default: total memories ·
+  stores↑ recalls↓ this month · $ saved today. Every number is a real
+  measurement from `/v1/stats` — no faked progress.
+- New display modes: `full` (default), `tokens` repurposed as brain volume,
+  `compact` repurposed as monthly activity. `savings` and `off` unchanged.
+
 ## 0.1.7
 
 - New tagline: "One brain. Every AI you use. Forever." Description now leads

@@ -58,13 +58,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     health = new HealthMonitor(api, logger);
 
     health.onUpdate((snap: HealthSnapshot) => {
-        // Drive status bar from the live health snapshot. Tokens are
-        // approximated from chunks×~CHARS_PER_TOKEN to give a stable visual
-        // even before the agent starts talking.
+        // Drive status bar from the live health snapshot. All numbers come
+        // from /v1/stats and are real measurements — no fakes.
         statusBar.update({
-            tokens: 0,
-            cap: settings.criticalAtTokens(),
+            chunks: snap.chunks,
+            storageMB: snap.storageMB,
+            storesMonth: snap.storesThisMonth,
+            recallsMonth: snap.recallsThisMonth,
             savedToday: snap.savedTodayUSD,
+            plan: snap.plan,
         });
         if (snap.online) {
             statusBar.show('connected');
