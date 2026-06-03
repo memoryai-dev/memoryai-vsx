@@ -1,0 +1,125 @@
+{
+  "name": "memoryai-vsx",
+  "displayName": "MemoryAI",
+  "description": "Your AI keeps forgetting you. MemoryAI gives it a real long-term memory — one that follows you across every IDE and every model.",
+  "version": "0.1.6",
+  "publisher": "memoryai",
+  "homepage": "https://memoryai.dev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/memoryai-dev/memoryai-vsx"
+  },
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.94.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "keywords": [
+    "memory",
+    "llm",
+    "context",
+    "ai",
+    "claude",
+    "gpt",
+    "cost"
+  ],
+  "icon": "icon.png",
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "memoryai.connect",
+        "title": "MemoryAI: Connect (paste API key)",
+        "category": "MemoryAI"
+      },
+      {
+        "command": "memoryai.disconnect",
+        "title": "MemoryAI: Disconnect",
+        "category": "MemoryAI"
+      },
+      {
+        "command": "memoryai.showHealth",
+        "title": "MemoryAI: Show Brain Health",
+        "category": "MemoryAI"
+      },
+      {
+        "command": "memoryai.openSettings",
+        "title": "MemoryAI: Open Settings",
+        "category": "MemoryAI"
+      },
+      {
+        "command": "memoryai.exportLogs",
+        "title": "MemoryAI: Export Diagnostic Logs",
+        "category": "MemoryAI"
+      }
+    ],
+    "configuration": {
+      "title": "MemoryAI",
+      "properties": {
+        "memoryai.endpoint": {
+          "type": "string",
+          "default": "https://memoryai.dev",
+          "description": "MemoryAI API endpoint. Use http://localhost:8420 for self-hosted."
+        },
+        "memoryai.compactAtTokens": {
+          "type": "number",
+          "default": 100000,
+          "minimum": 10000,
+          "maximum": 2000000,
+          "description": "Soft warning threshold in tokens. The MCP server starts piggybacking compact directives at this point. Must be less than memoryai.criticalAtTokens."
+        },
+        "memoryai.criticalAtTokens": {
+          "type": "number",
+          "default": 150000,
+          "minimum": 10000,
+          "maximum": 2000000,
+          "description": "Hard ceiling in tokens. The MCP server forces a compact at this point."
+        },
+        "memoryai.hardCap": {
+          "type": "number",
+          "default": 150000,
+          "minimum": 30000,
+          "maximum": 2000000,
+          "description": "Deprecated — use compactAtTokens / criticalAtTokens. Kept for one minor cycle.",
+          "markdownDeprecationMessage": "`memoryai.hardCap` has been replaced by `memoryai.compactAtTokens` and `memoryai.criticalAtTokens`. Update your settings."
+        },
+        "memoryai.privateMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Local-only mode for NDA / regulated data. Reserved for a future release."
+        },
+        "memoryai.statusBar": {
+          "type": "string",
+          "enum": ["off", "savings", "tokens", "compact", "full"],
+          "default": "savings",
+          "description": "Status-bar display format."
+        },
+        "memoryai.debug.logLevel": {
+          "type": "string",
+          "enum": ["off", "error", "warn", "info", "debug", "trace"],
+          "default": "warn",
+          "description": "Output channel verbosity."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node20",
+    "package": "npm run build -- --minify",
+    "watch": "npm run build -- --watch --sourcemap",
+    "lint": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.94.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.5.0"
+  }
+}
