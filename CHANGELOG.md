@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.7
+
+- New tagline: "One brain. Every AI you use. Forever." Description now leads
+  with the multi-IDE shared-memory positioning.
+
 ## 0.1.6
 
 - Repository moved to `github.com/memoryai-dev/memoryai-vsx` as the canonical
