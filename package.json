@@ -2,7 +2,7 @@
   "name": "memoryai-vsx",
   "displayName": "MemoryAI",
   "description": "One brain. Every AI you use. Forever. Shared long-term memory for Claude, Cursor, AI assistant, and any IDE that follows.",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "publisher": "memoryai",
   "homepage": "https://memoryai.dev",
   "repository": {
@@ -72,14 +72,28 @@
           "default": 100000,
           "minimum": 10000,
           "maximum": 2000000,
-          "description": "Soft warning threshold in tokens. The MCP server starts piggybacking compact directives at this point. Must be less than memoryai.criticalAtTokens."
+          "description": "Soft warning threshold in tokens. Used as fallback when compactPct is unset or model context window is unknown. Must be less than memoryai.criticalAtTokens."
         },
         "memoryai.criticalAtTokens": {
           "type": "number",
           "default": 150000,
           "minimum": 10000,
           "maximum": 2000000,
-          "description": "Hard ceiling in tokens. The MCP server forces a compact at this point."
+          "description": "Hard ceiling in tokens. Used as fallback when criticalPct is unset."
+        },
+        "memoryai.compactPct": {
+          "type": "number",
+          "default": 0.30,
+          "minimum": 0.05,
+          "maximum": 0.95,
+          "description": "Soft warning at this fraction of the model's context window (0.30 = 30%). Recommended over absolute tokens — works for any context size (200K Sonnet vs 1M Opus). Must be less than criticalPct."
+        },
+        "memoryai.criticalPct": {
+          "type": "number",
+          "default": 0.50,
+          "minimum": 0.10,
+          "maximum": 0.99,
+          "description": "Hard ceiling at this fraction of the model's context window (0.50 = 50%). Forces a compact at this point."
         },
         "memoryai.hardCap": {
           "type": "number",
