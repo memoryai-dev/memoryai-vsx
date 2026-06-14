@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.14
+
+- Context Guard is now silent-all except the single "context is full" notice.
+  Every save (compact_soon and compact_now) runs invisibly; the only message
+  you ever see is the one-per-session notice when the window is actually full
+  and you need to /compact or start a new chat. No more mid-task chatter.
+
 ## 0.1.13
 
 - Context Guard now has two modes, set via `memoryai.compactMode`:
