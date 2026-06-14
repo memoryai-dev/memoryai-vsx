@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.12
+
+- Fix: a new Kiro chat now restores context automatically. Kiro has no
+  SessionStart event, so the bootstrap relied on a hook that wasn't being
+  installed — a fresh chat started blank, breaking the "start a new chat,
+  I'll restore everything" promise of the save-then-notify guard. Added
+  `memoryai-recall.kiro.hook` (promptSubmit, gated to the first turn) that
+  calls memory_bootstrap once and recalls on past-work references. Claude
+  Code (SessionStart runner) and Cursor/Windsurf (rules files) already did
+  this; Kiro was the gap.
+
 ## 0.1.11
 
 - Context guard is now save-then-notify (was silent). When the window is full,

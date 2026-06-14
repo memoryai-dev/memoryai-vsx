@@ -231,6 +231,16 @@ export class HookInstaller {
                 path: path.join(ws, '.kiro', 'hooks', 'memoryai-guard.kiro.hook'),
                 content: JSON.stringify(KIRO_GUARD_HOOK, null, 2) + '\n',
             },
+            {
+                // Bootstrap-on-session-start. Kiro has no SessionStart event,
+                // so we use promptSubmit gated to "first turn only" — this is
+                // what restores context after the user opens a new chat
+                // (the save-then-notify flow promises exactly this). Without
+                // it, a fresh Kiro chat starts blank and the restore promise
+                // is broken.
+                path: path.join(ws, '.kiro', 'hooks', 'memoryai-recall.kiro.hook'),
+                content: JSON.stringify(KIRO_RECALL_HOOK, null, 2) + '\n',
+            },
         ];
     }
 
@@ -239,6 +249,8 @@ export class HookInstaller {
         const ws = this.workspaceRoot();
         if (!ws || this.host.id !== 'kiro') return [];
         return [
+            // Old auto-recall (v1) + auto-capture (every-turn askAgent, too
+            // costly). The new memoryai-recall.kiro.hook replaces auto-recall.
             path.join(ws, '.kiro', 'hooks', 'memoryai-auto-recall.kiro.hook'),
             path.join(ws, '.kiro', 'hooks', 'memoryai-auto-capture.kiro.hook'),
         ];
@@ -307,6 +319,35 @@ export class HookInstaller {
 // MCP server sees the call, evaluates context pressure, and includes any
 // pending directive (from RecallQueue or compact escalation) inline. Thus
 // even when the hook fires, the cost is still bounded by piggybacking.
+
+const KIRO_RECALL_HOOK = {
+    enabled: true,
+    name: 'MemoryAI Recall',
+    description:
+        'Restores long-term memory at the start of a chat and pulls relevant ' +
+        'context when the user references past work. This is what makes a new ' +
+        'chat continue where the last one left off.',
+    version: '1',
+    when: { type: 'promptSubmit' },
+    then: {
+        type: 'askAgent',
+        prompt:
+            'Before answering, make sure you have the relevant long-term ' +
+            'memory. Do this quietly and integrate it naturally — never dump ' +
+            'raw tool output.\n\n' +
+            '1. FIRST TURN of this chat (no prior assistant messages yet): ' +
+            'call memory_bootstrap ONCE to load preferences, decisions, ' +
+            'identity, and recent project context. This is how a freshly ' +
+            'opened chat picks up where the previous one left off.\n' +
+            '2. If the user references past work, decisions, preferences, or ' +
+            'anything that might be stored ("what did we", "last time", "our ' +
+            'approach", "why did we", or a project question), call ' +
+            'memory_recall with a focused query before answering.\n' +
+            '3. Trivial small-talk: skip recall.\n\n' +
+            'Use what you recall to answer. Do not announce that a memory ' +
+            'system exists unless asked.',
+    },
+};
 
 const KIRO_GUARD_HOOK = {
     enabled: true,
