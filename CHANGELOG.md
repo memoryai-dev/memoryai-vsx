@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.13
+
+- Context Guard now has two modes, set via `memoryai.compactMode`:
+  - **auto** (default) — set `memoryai.model` and the server detects the
+    context window and picks the trigger automatically (≤200K → 95%,
+    >200K → 30%).
+  - **manual** — set `memoryai.compactAtTokens` and
+    `memoryai.criticalAtTokens` to exact token counts and the guard fires
+    at those regardless of model. E.g. on a 1M-window model: 150000/200000,
+    or 500000/600000. Forwarded to the MCP server as `MEMORYAI_COMPACT_AT` /
+    `MEMORYAI_CRITICAL_AT`.
+- The Connect panel surfaces both modes with a model field (auto) or two
+  token fields (manual), validates compact < critical, and re-wires the MCP
+  env immediately on save.
+- Added Claude 4.8 family to the server model catalog
+  (`claude-opus-4-8`, `claude-sonnet-4-8`, plus `[1m]` variants).
+
 ## 0.1.12
 
 - Fix: a new Kiro chat now restores context automatically. Kiro has no

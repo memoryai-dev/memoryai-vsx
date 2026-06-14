@@ -120,7 +120,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             installer.wire({
                 endpoint: settings.endpoint(),
                 apiKey: existing,
-                model: settings.model(),
+                ...settings.guardInputs(),
             }).catch((e: unknown) =>
                 logger.warn(`Re-wire on activation failed: ${(e as Error).message}`),
             );

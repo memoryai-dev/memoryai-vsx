@@ -27,10 +27,16 @@ import { Logger } from './logger';
 interface ConnectInputs {
     endpoint: string;
     apiKey: string;
-    /** Optional model hint (e.g. "claude-opus-4-6[1m]") so the server can
+    /** Optional model hint (e.g. "claude-opus-4-8[1m]") so the server can
      *  auto-detect the context window and pick the adaptive compact trigger.
-     *  Omit for the 200K default. */
+     *  Used in auto mode. Omit for the 200K default. */
     model?: string;
+    /** Manual mode: absolute token count for the soft compact warning.
+     *  When set (with criticalAtTokens), forwarded as MEMORYAI_COMPACT_AT
+     *  and wins over the model-derived adaptive trigger. */
+    compactAtTokens?: number;
+    /** Manual mode: absolute token count for the forced (critical) compact. */
+    criticalAtTokens?: number;
 }
 
 export class HookInstaller {
@@ -151,13 +157,17 @@ export class HookInstaller {
             env: {
                 HM_ENDPOINT: inputs.endpoint,
                 HM_API_KEY: inputs.apiKey,
-                // Server owns context-guard policy and auto-detects the
-                // trigger from the model's context window:
-                //   window <= 200K → compact at 95%  (Claude/GPT/Sonnet)
-                //   window  > 200K → compact at 30%  (1M Opus / Gemini)
-                // Set MEMORYAI_MODEL so the server can resolve the window;
-                // otherwise it defaults to a 200K window.
+                // Server owns context-guard policy. Two modes:
+                //   AUTO — set MEMORYAI_MODEL; server resolves the window and
+                //          picks the adaptive trigger:
+                //            window <= 200K → compact at 95%  (Claude/GPT/Sonnet)
+                //            window  > 200K → compact at 30%  (1M Opus / Gemini)
+                //          Blank model → 200K default.
+                //   MANUAL — set MEMORYAI_COMPACT_AT + MEMORYAI_CRITICAL_AT to
+                //          absolute token counts; these win over the adaptive %.
                 ...(inputs.model ? { MEMORYAI_MODEL: inputs.model } : {}),
+                ...(inputs.compactAtTokens ? { MEMORYAI_COMPACT_AT: String(inputs.compactAtTokens) } : {}),
+                ...(inputs.criticalAtTokens ? { MEMORYAI_CRITICAL_AT: String(inputs.criticalAtTokens) } : {}),
             },
             disabled: false,
             autoApprove: [

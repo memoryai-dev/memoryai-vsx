@@ -5,6 +5,7 @@ import * as path from 'path';
 import { Logger } from './logger';
 import { ApiClient } from './api';
 import { HookInstaller } from './hookInstaller';
+import { Settings } from './settings';
 
 const SECRET_API_KEY = 'memoryai.apiKey';
 
@@ -49,6 +50,10 @@ export class ConnectPanel {
             endpoint: cfg.get<string>('endpoint', 'https://memoryai.dev'),
             privateMode: cfg.get<boolean>('privateMode', false),
             statusBar: cfg.get<string>('statusBar', 'savings'),
+            compactMode: cfg.get<string>('compactMode', 'auto'),
+            model: cfg.get<string>('model', ''),
+            compactAtTokens: cfg.get<number>('compactAtTokens', 0),
+            criticalAtTokens: cfg.get<number>('criticalAtTokens', 0),
             hasKey: false,
         };
         context.secrets.get(SECRET_API_KEY).then((existing) => {
@@ -73,9 +78,9 @@ export class ConnectPanel {
                         try {
                             const cfg = vscode.workspace.getConfiguration('memoryai');
                             const endpoint = cfg.get<string>('endpoint', 'https://memoryai.dev');
-                            const model = cfg.get<string>('model', '') || undefined;
+                            const guard = new Settings().guardInputs();
                             const result = await installer.wire({
-                                endpoint, apiKey: key, model,
+                                endpoint, apiKey: key, ...guard,
                             });
                             log.info(`wired ${result.wrote.length} files: ${result.wrote.join(', ')}`);
                         } catch (e) {
@@ -113,6 +118,25 @@ export class ConnectPanel {
                     if (typeof p.endpoint === 'string') await c.update('endpoint', p.endpoint, target);
                     if (typeof p.privateMode === 'boolean') await c.update('privateMode', p.privateMode, target);
                     if (typeof p.statusBar === 'string') await c.update('statusBar', p.statusBar, target);
+                    if (p.compactMode === 'auto' || p.compactMode === 'manual') await c.update('compactMode', p.compactMode, target);
+                    if (typeof p.model === 'string') await c.update('model', p.model, target);
+                    if (typeof p.compactAtTokens === 'number' && p.compactAtTokens >= 0) await c.update('compactAtTokens', Math.round(p.compactAtTokens), target);
+                    if (typeof p.criticalAtTokens === 'number' && p.criticalAtTokens >= 0) await c.update('criticalAtTokens', Math.round(p.criticalAtTokens), target);
+                    // Re-wire so guard-threshold changes land in the MCP env now,
+                    // not just on the next reconnect.
+                    try {
+                        const existing = await context.secrets.get(SECRET_API_KEY);
+                        if (existing) {
+                            const guard = new Settings().guardInputs();
+                            await installer.wire({
+                                endpoint: c.get<string>('endpoint', 'https://memoryai.dev'),
+                                apiKey: existing,
+                                ...guard,
+                            });
+                        }
+                    } catch (e) {
+                        log.warn(`re-wire after settings save failed: ${(e as Error).message}`);
+                    }
                     panel.webview.postMessage({ type: 'savedSettings' });
                 } else if (msg.type === 'openExternal') {
                     const url = String(msg.payload?.url ?? '');
@@ -243,6 +267,30 @@ a:hover { color: var(--vscode-textLink-activeForeground); }
 </div>
 
 <div class="section">
+    <h2>Context Guard</h2>
+    <label>Mode</label>
+    <select id="compactMode">
+        <option value="auto">Auto — detect window from model, pick trigger automatically</option>
+        <option value="manual">Manual — I set the exact compact/critical token counts</option>
+    </select>
+
+    <div id="autoBox">
+        <label>Model</label>
+        <input id="model" type="text" placeholder="claude-opus-4-8[1m]">
+        <div class="desc">Used to auto-detect the context window (≤200K → trigger at 95%, &gt;200K → 30%). Leave blank for the 200K default.</div>
+    </div>
+
+    <div id="manualBox">
+        <label>Compact at (tokens)</label>
+        <input id="compactAtTokens" type="number" min="0" placeholder="150000">
+        <label>Critical at (tokens)</label>
+        <input id="criticalAtTokens" type="number" min="0" placeholder="200000">
+        <div class="desc">Soft warning at "compact", forced save at "critical". Must be compact &lt; critical. Example on a 1M model: 150000 / 200000, or 500000 / 600000.</div>
+        <div class="status err" id="manualErr"></div>
+    </div>
+</div>
+
+<div class="section">
     <h2>Display</h2>
     <label>Status bar format</label>
     <select id="statusBar">
@@ -269,6 +317,11 @@ function applyInit(p) {
     $('endpoint').value = p.endpoint || '';
     setToggle($('privateMode'), !!p.privateMode);
     $('statusBar').value = p.statusBar || 'savings';
+    $('compactMode').value = p.compactMode || 'auto';
+    $('model').value = p.model || '';
+    $('compactAtTokens').value = p.compactAtTokens ? String(p.compactAtTokens) : '';
+    $('criticalAtTokens').value = p.criticalAtTokens ? String(p.criticalAtTokens) : '';
+    applyMode();
     if (p.hasKey) {
         $('apiKey').placeholder = '••••••••• (key already saved — paste new to replace)';
         $('status').className = 'status ok';
@@ -276,6 +329,13 @@ function applyInit(p) {
     }
 }
 applyInit(init);
+
+function applyMode() {
+    const manual = $('compactMode').value === 'manual';
+    $('autoBox').style.display = manual ? 'none' : '';
+    $('manualBox').style.display = manual ? '' : 'none';
+}
+$('compactMode').addEventListener('change', applyMode);
 
 function setToggle(el, on) {
     el.classList.toggle('on', !!on);
@@ -305,12 +365,24 @@ $('btnDisconnect').addEventListener('click', () => {
 });
 
 $('btnSave').addEventListener('click', () => {
+    const mode = $('compactMode').value;
+    const compactAt = parseInt($('compactAtTokens').value, 10) || 0;
+    const criticalAt = parseInt($('criticalAtTokens').value, 10) || 0;
+    $('manualErr').textContent = '';
+    if (mode === 'manual' && compactAt && criticalAt && compactAt >= criticalAt) {
+        $('manualErr').textContent = 'Compact tokens must be lower than Critical tokens.';
+        return;
+    }
     vscode.postMessage({
         type: 'saveSettings',
         payload: {
             endpoint: $('endpoint').value.trim(),
             privateMode: $('privateMode').dataset.on === '1',
             statusBar: $('statusBar').value,
+            compactMode: mode,
+            model: $('model').value.trim(),
+            compactAtTokens: compactAt,
+            criticalAtTokens: criticalAt,
         },
     });
 });

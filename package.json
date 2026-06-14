@@ -2,7 +2,7 @@
   "name": "memoryai-vsx",
   "displayName": "MemoryAI",
   "description": "One brain. Every AI you use. Forever. Shared long-term memory for Claude, Cursor, AI assistant, and any IDE that follows.",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "publisher": "memoryai",
   "homepage": "https://memoryai.dev",
   "repository": {
@@ -72,11 +72,33 @@
           "default": "https://memoryai.dev",
           "description": "MemoryAI API endpoint. Use http://localhost:8420 for self-hosted."
         },
+        "memoryai.compactMode": {
+          "type": "string",
+          "enum": ["auto", "manual"],
+          "default": "auto",
+          "description": "How the context-guard picks its compact/critical triggers. auto = detect the model's window from 'memoryai.model' and pick the trigger automatically (≤200K window → 95%, >200K → 30%). manual = use the exact token counts you set in 'memoryai.compactAtTokens' and 'memoryai.criticalAtTokens'.",
+          "enumDescriptions": [
+            "Auto-detect from the model name and pick the trigger automatically.",
+            "Use the exact compact/critical token counts you set below."
+          ]
+        },
         "memoryai.model": {
           "type": "string",
           "default": "",
-          "description": "Your model name so MemoryAI auto-detects its context window and picks the right compact trigger (≤200K window → 95%, >200K → 30%). Examples: claude-sonnet-4-6, claude-opus-4-6[1m], gemini-1.5-pro. Leave blank to use the 200K default.",
-          "examples": ["claude-sonnet-4-6", "claude-opus-4-6[1m]", "gpt-4o", "gemini-1.5-pro"]
+          "description": "Auto mode only. Your model name so MemoryAI auto-detects its context window and picks the right compact trigger (≤200K window → 95%, >200K → 30%). Examples: claude-sonnet-4-6, claude-opus-4-8[1m], gemini-1.5-pro. Leave blank to use the 200K default.",
+          "examples": ["claude-sonnet-4-6", "claude-opus-4-8[1m]", "gpt-4o", "gemini-1.5-pro"]
+        },
+        "memoryai.compactAtTokens": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Manual mode only. Token count at which the guard starts warning (soft compact). Example: on a 1M-window model set 150000. Must be lower than criticalAtTokens. 0 = let the server decide."
+        },
+        "memoryai.criticalAtTokens": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Manual mode only. Token count at which the guard forces a compact (hard ceiling). Example: on a 1M-window model set 200000 (or 600000). Must be higher than compactAtTokens. 0 = let the server decide."
         },
         "memoryai.privateMode": {
           "type": "boolean",
