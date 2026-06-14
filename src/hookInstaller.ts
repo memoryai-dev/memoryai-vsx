@@ -27,10 +27,10 @@ import { Logger } from './logger';
 interface ConnectInputs {
     endpoint: string;
     apiKey: string;
-    /** Soft warning threshold in tokens (e.g. 100_000). */
-    compactAtTokens: number;
-    /** Hard ceiling in tokens — extension will rotate at this point (e.g. 150_000). */
-    criticalAtTokens: number;
+    /** Optional model hint (e.g. "claude-opus-4-6[1m]") so the server can
+     *  auto-detect the context window and pick the adaptive compact trigger.
+     *  Omit for the 200K default. */
+    model?: string;
 }
 
 export class HookInstaller {
@@ -151,10 +151,13 @@ export class HookInstaller {
             env: {
                 HM_ENDPOINT: inputs.endpoint,
                 HM_API_KEY: inputs.apiKey,
-                // Absolute token thresholds. Users find tokens easier to reason
-                // about than percentages; HM_CONTEXT_CAP is no longer required.
-                HM_COMPACT_AT: String(inputs.compactAtTokens),
-                HM_CRITICAL_AT: String(inputs.criticalAtTokens),
+                // Server owns context-guard policy and auto-detects the
+                // trigger from the model's context window:
+                //   window <= 200K → compact at 95%  (Claude/GPT/Sonnet)
+                //   window  > 200K → compact at 30%  (1M Opus / Gemini)
+                // Set MEMORYAI_MODEL so the server can resolve the window;
+                // otherwise it defaults to a 200K window.
+                ...(inputs.model ? { MEMORYAI_MODEL: inputs.model } : {}),
             },
             disabled: false,
             autoApprove: [

@@ -2,7 +2,7 @@
   "name": "memoryai-vsx",
   "displayName": "MemoryAI",
   "description": "One brain. Every AI you use. Forever. Shared long-term memory for Claude, Cursor, AI assistant, and any IDE that follows.",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "publisher": "memoryai",
   "homepage": "https://memoryai.dev",
   "repository": {
@@ -54,6 +54,11 @@
         "category": "MemoryAI"
       },
       {
+        "command": "memoryai.configureCompactThreshold",
+        "title": "MemoryAI: Configure Compact Threshold (tokens)",
+        "category": "MemoryAI"
+      },
+      {
         "command": "memoryai.exportLogs",
         "title": "MemoryAI: Export Diagnostic Logs",
         "category": "MemoryAI"
@@ -67,41 +72,11 @@
           "default": "https://memoryai.dev",
           "description": "MemoryAI API endpoint. Use http://localhost:8420 for self-hosted."
         },
-        "memoryai.compactAtTokens": {
-          "type": "number",
-          "default": 100000,
-          "minimum": 10000,
-          "maximum": 2000000,
-          "description": "Soft warning threshold in tokens. Used as fallback when compactPct is unset or model context window is unknown. Must be less than memoryai.criticalAtTokens."
-        },
-        "memoryai.criticalAtTokens": {
-          "type": "number",
-          "default": 150000,
-          "minimum": 10000,
-          "maximum": 2000000,
-          "description": "Hard ceiling in tokens. Used as fallback when criticalPct is unset."
-        },
-        "memoryai.compactPct": {
-          "type": "number",
-          "default": 0.30,
-          "minimum": 0.05,
-          "maximum": 0.95,
-          "description": "Soft warning at this fraction of the model's context window (0.30 = 30%). Recommended over absolute tokens — works for any context size (200K Sonnet vs 1M Opus). Must be less than criticalPct."
-        },
-        "memoryai.criticalPct": {
-          "type": "number",
-          "default": 0.50,
-          "minimum": 0.10,
-          "maximum": 0.99,
-          "description": "Hard ceiling at this fraction of the model's context window (0.50 = 50%). Forces a compact at this point."
-        },
-        "memoryai.hardCap": {
-          "type": "number",
-          "default": 150000,
-          "minimum": 30000,
-          "maximum": 2000000,
-          "description": "Deprecated — use compactAtTokens / criticalAtTokens. Kept for one minor cycle.",
-          "markdownDeprecationMessage": "`memoryai.hardCap` has been replaced by `memoryai.compactAtTokens` and `memoryai.criticalAtTokens`. Update your settings."
+        "memoryai.model": {
+          "type": "string",
+          "default": "",
+          "description": "Your model name so MemoryAI auto-detects its context window and picks the right compact trigger (≤200K window → 95%, >200K → 30%). Examples: claude-sonnet-4-6, claude-opus-4-6[1m], gemini-1.5-pro. Leave blank to use the 200K default.",
+          "examples": ["claude-sonnet-4-6", "claude-opus-4-6[1m]", "gpt-4o", "gemini-1.5-pro"]
         },
         "memoryai.privateMode": {
           "type": "boolean",

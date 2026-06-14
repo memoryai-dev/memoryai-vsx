@@ -18,6 +18,11 @@ export class StatusBar implements vscode.Disposable {
     private recallsMonth = 0;
     private savedToday = 0;
     private plan = 'free';
+    // Brain identity (Wave 2.5) — surfaces "who" the brain is in the tooltip.
+    private brainName: string | null = null;
+    private brainAgeDays: number | null = null;
+    private dnaCount: number | null = null;
+    private lastDreamAt: string | null = null;
 
     constructor(private settings: Settings, private log: Logger) {
         this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -42,6 +47,10 @@ export class StatusBar implements vscode.Disposable {
         recallsMonth?: number;
         savedToday?: number;
         plan?: string;
+        brainName?: string | null;
+        brainAgeDays?: number | null;
+        dnaCount?: number | null;
+        lastDreamAt?: string | null;
     }): void {
         if (opts.chunks !== undefined) this.chunks = opts.chunks;
         if (opts.storageMB !== undefined) this.storageMB = opts.storageMB;
@@ -49,6 +58,10 @@ export class StatusBar implements vscode.Disposable {
         if (opts.recallsMonth !== undefined) this.recallsMonth = opts.recallsMonth;
         if (opts.savedToday !== undefined) this.savedToday = opts.savedToday;
         if (opts.plan !== undefined) this.plan = opts.plan;
+        if (opts.brainName !== undefined) this.brainName = opts.brainName;
+        if (opts.brainAgeDays !== undefined) this.brainAgeDays = opts.brainAgeDays;
+        if (opts.dnaCount !== undefined) this.dnaCount = opts.dnaCount;
+        if (opts.lastDreamAt !== undefined) this.lastDreamAt = opts.lastDreamAt;
         this.render();
     }
 
@@ -88,17 +101,41 @@ export class StatusBar implements vscode.Disposable {
                     // full — every signal in one glance.
                     text = `${ICON} ${formatK(this.chunks)} · ${formatK(this.storesMonth)}↑ ${formatK(this.recallsMonth)}↓ · $${dollar}`;
                 }
-                this.item.tooltip = [
-                    `MemoryAI — ${this.plan} plan`,
-                    `Brain: ${formatK(this.chunks)} memories · ${this.storageMB.toFixed(1)}MB`,
-                    `This month: ${this.storesMonth} stores · ${this.recallsMonth} recalls`,
-                    `Saved today: $${dollar}`,
-                    '',
-                    'Click to open Brain Health.',
-                ].join('\n');
+                this.item.tooltip = this.buildTooltip();
                 break;
         }
         this.item.text = text;
+    }
+
+    /** Build the multi-line tooltip. Surfaces brain identity when known. */
+    private buildTooltip(): string {
+        const dollar = this.savedToday.toFixed(2);
+        const lines: string[] = [];
+
+        // Header — "Brain 'Mnemo' · 47d old · pro plan" when identity is known,
+        // falls back to "MemoryAI — pro plan" for older servers.
+        if (this.brainName) {
+            const ageBit = this.brainAgeDays !== null
+                ? ` · ${this.brainAgeDays}d old`
+                : '';
+            lines.push(`Brain "${this.brainName}"${ageBit} · ${this.plan} plan`);
+        } else {
+            lines.push(`MemoryAI — ${this.plan} plan`);
+        }
+
+        lines.push(`Memories: ${formatK(this.chunks)} · ${this.storageMB.toFixed(1)}MB`);
+        if (this.dnaCount !== null && this.dnaCount > 0) {
+            lines.push(`DNA-protected: ${this.dnaCount}`);
+        }
+        if (this.lastDreamAt) {
+            const phrase = relativeTime(this.lastDreamAt);
+            if (phrase) lines.push(`Last dream: ${phrase}`);
+        }
+        lines.push(`This month: ${this.storesMonth} stores · ${this.recallsMonth} recalls`);
+        lines.push(`Saved today: $${dollar}`);
+        lines.push('');
+        lines.push('Click to open Brain Health.');
+        return lines.join('\n');
     }
 
     dispose(): void {
@@ -110,4 +147,20 @@ function formatK(n: number): string {
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
     if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
     return String(n);
+}
+
+/** Convert ISO timestamp to a short relative phrase ("3h ago", "2d ago").
+ *  Returns empty string when the input can't be parsed. */
+function relativeTime(iso: string): string {
+    const t = Date.parse(iso);
+    if (isNaN(t)) return '';
+    const ms = Date.now() - t;
+    if (ms < 0) return 'in the future';
+    const minutes = Math.round(ms / 60_000);
+    if (minutes < 1) return 'just now';
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.round(hours / 24);
+    return `${days}d ago`;
 }

@@ -63,7 +63,7 @@ export class HealthPanel {
 
         panel.onDidDispose(() => {
             HealthPanel.current = undefined;
-            (sub as unknown as () => void);
+            sub.dispose();
         });
     }
 

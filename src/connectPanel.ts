@@ -47,8 +47,6 @@ export class ConnectPanel {
         const cfg = vscode.workspace.getConfiguration('memoryai');
         const initial = {
             endpoint: cfg.get<string>('endpoint', 'https://memoryai.dev'),
-            compactAtTokens: cfg.get<number>('compactAtTokens', 100_000),
-            criticalAtTokens: cfg.get<number>('criticalAtTokens', 150_000),
             privateMode: cfg.get<boolean>('privateMode', false),
             statusBar: cfg.get<string>('statusBar', 'savings'),
             hasKey: false,
@@ -75,10 +73,9 @@ export class ConnectPanel {
                         try {
                             const cfg = vscode.workspace.getConfiguration('memoryai');
                             const endpoint = cfg.get<string>('endpoint', 'https://memoryai.dev');
-                            const compactAtTokens = cfg.get<number>('compactAtTokens', 100_000);
-                            const criticalAtTokens = cfg.get<number>('criticalAtTokens', 150_000);
+                            const model = cfg.get<string>('model', '') || undefined;
                             const result = await installer.wire({
-                                endpoint, apiKey: key, compactAtTokens, criticalAtTokens,
+                                endpoint, apiKey: key, model,
                             });
                             log.info(`wired ${result.wrote.length} files: ${result.wrote.join(', ')}`);
                         } catch (e) {
@@ -114,13 +111,8 @@ export class ConnectPanel {
                     const target = vscode.ConfigurationTarget.Global;
                     const c = vscode.workspace.getConfiguration('memoryai');
                     if (typeof p.endpoint === 'string') await c.update('endpoint', p.endpoint, target);
-                    if (typeof p.compactAtTokens === 'number') await c.update('compactAtTokens', p.compactAtTokens, target);
-                    if (typeof p.criticalAtTokens === 'number') await c.update('criticalAtTokens', p.criticalAtTokens, target);
                     if (typeof p.privateMode === 'boolean') await c.update('privateMode', p.privateMode, target);
                     if (typeof p.statusBar === 'string') await c.update('statusBar', p.statusBar, target);
-                    if (typeof p.compactAtTokens === 'number' && typeof p.criticalAtTokens === 'number') {
-                        await c.update('hardCap', undefined, target);
-                    }
                     panel.webview.postMessage({ type: 'savedSettings' });
                 } else if (msg.type === 'openExternal') {
                     const url = String(msg.payload?.url ?? '');
@@ -240,18 +232,6 @@ a:hover { color: var(--vscode-textLink-activeForeground); }
 </div>
 
 <div class="section">
-    <h2>Cost ceiling</h2>
-    <label>Compact at (tokens) — server starts piggybacking compact directives here</label>
-    <input id="compactAtTokens" type="number" min="10000" max="2000000" step="5000">
-
-    <label>Critical at (tokens) — server forces compact here</label>
-    <input id="criticalAtTokens" type="number" min="10000" max="2000000" step="5000">
-    <div class="muted" style="margin-top:6px">
-        Typical: compact 100,000 / critical 150,000. Critical must be higher than compact.
-    </div>
-</div>
-
-<div class="section">
     <h2>Privacy</h2>
     <div class="row-toggle">
         <div>
@@ -287,8 +267,6 @@ const $ = (id) => document.getElementById(id);
 
 function applyInit(p) {
     $('endpoint').value = p.endpoint || '';
-    $('compactAtTokens').value = p.compactAtTokens || 100000;
-    $('criticalAtTokens').value = p.criticalAtTokens || 150000;
     setToggle($('privateMode'), !!p.privateMode);
     $('statusBar').value = p.statusBar || 'savings';
     if (p.hasKey) {
@@ -327,19 +305,10 @@ $('btnDisconnect').addEventListener('click', () => {
 });
 
 $('btnSave').addEventListener('click', () => {
-    const compactAt = Number($('compactAtTokens').value || 100000);
-    const criticalAt = Number($('criticalAtTokens').value || 150000);
-    if (!(criticalAt > compactAt)) {
-        $('settingsStatus').className = 'status err';
-        $('settingsStatus').textContent = 'Critical must be greater than compact.';
-        return;
-    }
     vscode.postMessage({
         type: 'saveSettings',
         payload: {
             endpoint: $('endpoint').value.trim(),
-            compactAtTokens: compactAt,
-            criticalAtTokens: criticalAt,
             privateMode: $('privateMode').dataset.on === '1',
             statusBar: $('statusBar').value,
         },

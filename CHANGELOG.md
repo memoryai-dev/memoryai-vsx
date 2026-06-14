@@ -1,20 +1,16 @@
 # Changelog
 
+## 0.1.10
+
+- New `memoryai.model` setting — tell MemoryAI your model name and the
+  context guard auto-detects its window to pick the right compact trigger:
+  windows ≤200K (Claude/GPT/Sonnet) compact at 95%, windows >200K
+  (1M Opus / Gemini) compact at 30%. Forwarded to the MCP server as
+  `MEMORYAI_MODEL`. Leave blank for the 200K default.
+
 ## 0.1.9
 
-- New percent-based thresholds — `memoryai.compactPct` (default 0.30) and
-  `memoryai.criticalPct` (default 0.50). Sent to the MCP server as
-  `HM_COMPACT_PCT` / `HM_CRITICAL_PCT` env vars and as `compact_pct` /
-  `critical_pct` on guard requests. Adapts automatically to any model's
-  context window (Sonnet 200K, Opus 1M) instead of hard-coding token
-  counts. Absolute `compactAtTokens` / `criticalAtTokens` stay as fallback.
-- Brain identity in the status bar tooltip — when `/v1/stats` returns
-  `brain_name`, `brain_age_days`, `last_dream_at`, or `dna_count`, the
-  tooltip shows `Brain "Mnemo" · 47d old`, `DNA-protected: 12`,
-  `Last dream: 3h ago`. Older servers fall back to the original layout.
-- Hardening: `JSON.parse` is now wrapped, an extension-state handler leak
-  on disconnect/connect is fixed, and the status bar no longer flips to
-  `connected` before the first `/v1/stats` reply lands.
+- Percent-based thresholds + brain identity in the status-bar tooltip.
 
 ## 0.1.8
 

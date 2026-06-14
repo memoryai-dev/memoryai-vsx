@@ -41,6 +41,15 @@ export interface HealthSnapshot {
     tenantId: string;
     /** Wall-clock time of this snapshot. */
     fetchedAt: number;
+    /** Brain identity / biological state (Wave 2.5).
+     *  null when server doesn't provide them (older versions). */
+    brainName: string | null;
+    /** Days since brain was created. null = unknown. */
+    brainAgeDays: number | null;
+    /** ISO timestamp of last dream cycle. null = never dreamed yet. */
+    lastDreamAt: string | null;
+    /** Count of DNA-protected memories (preference/decision/identity/pitfall/procedure). */
+    dnaCount: number | null;
 }
 
 export class HealthMonitor implements vscode.Disposable {
@@ -55,7 +64,16 @@ export class HealthMonitor implements vscode.Disposable {
 
     constructor(private api: ApiClient, private log: Logger) {}
 
-    onUpdate(h: HealthHandler): void { this.handlers.push(h); }
+    /** Subscribe to health snapshot updates. Returns an unsubscribe function. */
+    onUpdate(h: HealthHandler): vscode.Disposable {
+        this.handlers.push(h);
+        return {
+            dispose: () => {
+                const idx = this.handlers.indexOf(h);
+                if (idx >= 0) this.handlers.splice(idx, 1);
+            },
+        };
+    }
 
     /** Snapshot from the most recent successful poll, or null if never. */
     snapshot(): HealthSnapshot | null { return this.last; }
@@ -104,6 +122,10 @@ export class HealthMonitor implements vscode.Disposable {
                 plan: r.plan || 'free',
                 tenantId: r.tenant_id || '',
                 fetchedAt: Date.now(),
+                brainName: typeof r.brain_name === 'string' && r.brain_name.length > 0 ? r.brain_name : null,
+                brainAgeDays: typeof r.brain_age_days === 'number' ? r.brain_age_days : null,
+                lastDreamAt: typeof r.last_dream_at === 'string' && r.last_dream_at.length > 0 ? r.last_dream_at : null,
+                dnaCount: typeof r.dna_count === 'number' ? r.dna_count : null,
             };
             this.last = snap;
             this.fire(snap);

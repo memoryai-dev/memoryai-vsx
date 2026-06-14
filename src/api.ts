@@ -13,10 +13,8 @@ export interface TurnCheckRequest {
     max_tokens?: number;
     model?: string | null;
     skip_below_turns?: number;
-    compact_pct?: number;
-    critical_pct?: number;
-    compact_at_tokens?: number;
-    critical_at_tokens?: number;
+    // Threshold knobs are intentionally not part of the request shape.
+    // The server enforces 150K compact / 200K critical for all models.
 }
 
 export interface TurnCheckResponse {
@@ -54,6 +52,21 @@ export interface StatsResponse {
     saved_this_month_usd?: number;
     last_store_seconds_ago?: number;
     last_recall_seconds_ago?: number;
+    /** Brain identity / biological state — Wave 2.5. Older servers don't
+     *  return these; the extension renders without them gracefully. */
+    brain_name?: string | null;
+    brain_age_days?: number | null;
+    last_dream_at?: string | null;
+    dna_count?: number | null;
+}
+
+/** /v1/context/guard/settings — server-owned per-tenant overrides. */
+export interface GuardSettings {
+    plan: string;
+    defaults: { compact_at_tokens: number; critical_at_tokens: number };
+    user_overrides: { compact_at_tokens: number | null; critical_at_tokens: number | null };
+    effective: { compact_at_tokens: number; critical_at_tokens: number };
+    explanation?: Record<string, string>;
 }
 
 export class ApiClient {
@@ -100,7 +113,12 @@ export class ApiClient {
             this.log.warn(`turn-check ${r.status}: ${r.body.slice(0, 200)}`);
             return null;
         }
-        return JSON.parse(r.body) as TurnCheckResponse;
+        try {
+            return JSON.parse(r.body) as TurnCheckResponse;
+        } catch (e) {
+            this.log.warn(`turn-check parse: ${(e as Error).message}`);
+            return null;
+        }
     }
 
     async compact(content: string, taskContext?: string): Promise<boolean> {
@@ -119,7 +137,12 @@ export class ApiClient {
             this.log.warn(`bootstrap ${r.status}: ${r.body.slice(0, 200)}`);
             return null;
         }
-        return JSON.parse(r.body);
+        try {
+            return JSON.parse(r.body);
+        } catch (e) {
+            this.log.warn(`bootstrap parse: ${(e as Error).message}`);
+            return null;
+        }
     }
 
     async recall(query: string, depth: string, limit: number, tokenBudget: number, projectId: string | null): Promise<RecallResult[]> {
@@ -135,8 +158,13 @@ export class ApiClient {
             this.log.debug(`recall ${r.status}: ${r.body.slice(0, 200)}`);
             return [];
         }
-        const data = JSON.parse(r.body) as { results?: RecallResult[] };
-        return data.results ?? [];
+        try {
+            const data = JSON.parse(r.body) as { results?: RecallResult[] };
+            return data.results ?? [];
+        } catch (e) {
+            this.log.warn(`recall parse: ${(e as Error).message}`);
+            return [];
+        }
     }
 
     async store(content: string, memoryType: string, tags: string[], projectId: string | null): Promise<boolean> {
@@ -157,8 +185,55 @@ export class ApiClient {
             context_budget_tokens: budget,
         });
         if (!r.ok) return '';
-        const data = JSON.parse(r.body) as { context_block?: string };
-        return data.context_block ?? '';
+        try {
+            const data = JSON.parse(r.body) as { context_block?: string };
+            return data.context_block ?? '';
+        } catch (e) {
+            this.log.warn(`l2Inject parse: ${(e as Error).message}`);
+            return '';
+        }
+    }
+
+    /** GET /v1/context/guard/settings — fetch the effective tenant overrides. */
+    async getGuardSettings(): Promise<GuardSettings | null> {
+        try {
+            const r = await this.request('GET', '/v1/context/guard/settings', null);
+            if (!r.ok) {
+                this.log.warn(`getGuardSettings ${r.status}: ${r.body.slice(0, 200)}`);
+                return null;
+            }
+            return JSON.parse(r.body) as GuardSettings;
+        } catch (e) {
+            this.log.warn(`getGuardSettings parse: ${(e as Error).message}`);
+            return null;
+        }
+    }
+
+    /** POST /v1/context/guard/settings — set per-tenant token thresholds.
+     *  Pass null to leave a field unchanged. Server validates compact <
+     *  critical and rejects 400 on conflict. */
+    async updateGuardSettings(args: {
+        compactAtTokens?: number | null;
+        criticalAtTokens?: number | null;
+    }): Promise<{ ok: boolean; settings: GuardSettings | null; errors?: string[] }> {
+        const payload: Record<string, number> = {};
+        if (typeof args.compactAtTokens === 'number') payload.compact_at_tokens = args.compactAtTokens;
+        if (typeof args.criticalAtTokens === 'number') payload.critical_at_tokens = args.criticalAtTokens;
+        const r = await this.request('POST', '/v1/context/guard/settings', payload);
+        if (!r.ok) {
+            try {
+                const err = JSON.parse(r.body) as { errors?: string[]; error?: string };
+                return { ok: false, settings: null, errors: err.errors || (err.error ? [err.error] : ['unknown_error']) };
+            } catch {
+                return { ok: false, settings: null, errors: [`HTTP ${r.status}`] };
+            }
+        }
+        try {
+            return { ok: true, settings: JSON.parse(r.body) as GuardSettings };
+        } catch (e) {
+            this.log.warn(`updateGuardSettings parse: ${(e as Error).message}`);
+            return { ok: false, settings: null, errors: ['parse_error'] };
+        }
     }
 
     /**
