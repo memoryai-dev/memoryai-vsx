@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.0
+
+- Ships the manual context-guard threshold settings that were authored but
+  never packaged into a published build. `memoryai.compactMode`,
+  `memoryai.compactAtTokens`, and `memoryai.criticalAtTokens` are now visible
+  in Settings and wired end-to-end through the MCP env
+  (`MEMORYAI_COMPACT_AT` / `MEMORYAI_CRITICAL_AT`) to the server. No server
+  change required — the server already honours these overrides.
+- Minor bump from 0.1.x to 0.2.0 because the published 0.1.14 did not actually
+  contain the 0.1.13 manual-mode work.
+
 ## 0.1.14
 
 - Context Guard is now silent-all except the single "context is full" notice.
