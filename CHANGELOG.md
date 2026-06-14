@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.2
+
+- Manual mode is now a single number. Removed the "Compact At Tokens" setting
+  — you only set "Critical At Tokens" (the hard ceiling where a compact is
+  forced) and the soft compact warning is derived automatically at 80% of it.
+  One number to reason about instead of two, and no risk of setting an
+  invalid compact ≥ critical pair.
+
+## 0.2.1
+
+- Settings polish: the context-guard fields now carry an explicit `order` so
+  Compact Mode, Model, Compact At Tokens, and Critical At Tokens sit together
+  in the right sequence (VS Code was alphabetising them, which split the two
+  token fields apart).
+- Clearer descriptions: each field now states whether it applies in auto or
+  manual mode. Note: VS Code's native Settings page cannot hide a field based
+  on another field's value, so every field is always visible there — the
+  MemoryAI Connect panel is the place that hides auto/manual fields for you.
+
 ## 0.2.0
 
 - Ships the manual context-guard threshold settings that were authored but
