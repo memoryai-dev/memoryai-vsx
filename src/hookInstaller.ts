@@ -314,22 +314,27 @@ const KIRO_GUARD_HOOK = {
     description:
         'Single conditional check after each turn. Calls ide_turn_check; ' +
         'short-circuits below turn 15 so most turns cost nothing.',
-    version: '3',
+    version: '4',
     when: { type: 'agentStop' },
     then: {
         type: 'askAgent',
         prompt:
-            'SILENT BACKGROUND TASK — never message the user about this.\n\n' +
+            'BACKGROUND TASK — runs after the task finishes.\n\n' +
             '1. Count the assistant turns in this conversation.\n' +
             '2. If your turn count is below 15, STOP. Do not call any tools, ' +
             'do not respond.\n' +
             '3. If the count is 15 or higher, call ide_turn_check with ' +
-            'turn_count = (your count) and max_tokens = 200000. Read the ' +
-            'response\'s action_prompt field and follow it VERBATIM. Every ' +
-            'action_prompt tells you to act SILENTLY (call ' +
-            'context_guard_compact when asked, do nothing when asked).\n\n' +
-            'Do not change your normal reply. Do not suggest /compact. Do ' +
-            'not tell the user a memory system is running.',
+            'turn_count = (your count), max_tokens = 200000, and model = ' +
+            '(your model name if known). Read the response\'s action_prompt ' +
+            'field and follow it VERBATIM.\n\n' +
+            'The action_prompt is self-describing. When it asks you to save, ' +
+            'call context_guard_compact and wait for status=stored. When it ' +
+            'then asks you to notify the user, append ONE short line to your ' +
+            'reply telling them context is saved and they can start a new ' +
+            'chat to shrink the window — you will restore everything. When ' +
+            'it asks you to do nothing, do nothing. Never invent a /compact ' +
+            'prompt the action_prompt did not ask for, and never show the ' +
+            'notice twice in one session.',
     },
 };
 
@@ -351,10 +356,13 @@ After each response:
    mistake (pitfall), or reusable procedure, call \`memory_store\` with the
    correct memory_type. Never store secrets.
 2. Count assistant turns in this conversation and call \`ide_turn_check\` with
-   turn_count and max_tokens=200000. Follow the action_prompt verbatim.
+   turn_count, max_tokens=200000, and model (if known). Follow the
+   action_prompt verbatim.
 
-Do all of the above silently. Never tell the user a memory system exists
-unless asked.
+Memory capture runs quietly. The ONE exception: when the action_prompt tells
+you context is saved and the user should compact / start a new chat, show that
+short notice in your reply — it is the only way the window actually shrinks.
+Otherwise never mention the memory system unless asked.
 `;
 
 const WINDSURF_RULES = `# MemoryAI auto-memory rules (calls MCP server "memoryai")
@@ -368,8 +376,10 @@ After each response:
 1. If the turn produced a decision, preference, important fact, lesson from a
    mistake (pitfall), or reusable procedure, call memory_store with the right
    memory_type. Never store secrets.
-2. Count assistant turns and call ide_turn_check (turn_count, max_tokens=200000).
-   Follow action_prompt verbatim.
+2. Count assistant turns and call ide_turn_check (turn_count, max_tokens=200000,
+   model if known). Follow action_prompt verbatim.
 
-All of the above runs silently.
+Capture runs quietly, with one exception: when the action_prompt says context
+is saved and the user should compact / open a new chat, show that short notice
+— it is the only thing that shrinks the window.
 `;

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.11
+
+- Context guard is now save-then-notify (was silent). When the window is full,
+  the agent saves your full context to the brain first, then shows ONE short
+  line telling you to start a new chat / `/compact` to shrink the window — it
+  restores everything automatically. This is the only path that genuinely
+  reduces the context window, so it is now visible instead of hidden.
+- The guard hook forwards your configured `memoryai.model` so the right
+  window-adaptive trigger applies (≤200K → 95%, >200K → 30%).
+
 ## 0.1.10
 
 - New `memoryai.model` setting — tell MemoryAI your model name and the
