@@ -52,7 +52,7 @@ export class ConnectPanel {
             statusBar: cfg.get<string>('statusBar', 'savings'),
             compactMode: cfg.get<string>('compactMode', 'auto'),
             model: cfg.get<string>('model', ''),
-            criticalAtTokens: cfg.get<number>('criticalAtTokens', 0),
+            compactAtTokens: cfg.get<number>('compactAtTokens', 0),
             hasKey: false,
         };
         context.secrets.get(SECRET_API_KEY).then((existing) => {
@@ -119,7 +119,7 @@ export class ConnectPanel {
                     if (typeof p.statusBar === 'string') await c.update('statusBar', p.statusBar, target);
                     if (p.compactMode === 'auto' || p.compactMode === 'manual') await c.update('compactMode', p.compactMode, target);
                     if (typeof p.model === 'string') await c.update('model', p.model, target);
-                    if (typeof p.criticalAtTokens === 'number' && p.criticalAtTokens >= 0) await c.update('criticalAtTokens', Math.round(p.criticalAtTokens), target);
+                    if (typeof p.compactAtTokens === 'number' && p.compactAtTokens >= 0) await c.update('compactAtTokens', Math.round(p.compactAtTokens), target);
                     // Re-wire so guard-threshold changes land in the MCP env now,
                     // not just on the next reconnect.
                     try {
@@ -279,9 +279,9 @@ a:hover { color: var(--vscode-textLink-activeForeground); }
     </div>
 
     <div id="manualBox">
-        <label>Critical at (tokens)</label>
-        <input id="criticalAtTokens" type="number" min="0" placeholder="200000">
-        <div class="desc">The hard ceiling — a compact is forced here. The soft warning fires automatically at 80% of this. Example on a 1M model: 200000 (warns at 160000) or 600000 (warns at 480000).</div>
+        <label>Compact at (tokens)</label>
+        <input id="compactAtTokens" type="number" min="0" placeholder="160000">
+        <div class="desc">The soft point where saving starts (compact). The hard ceiling that forces a compact is set automatically at 1.2× of this. Example on a 1M model: 160000 (critical at 192000) or 500000 (critical at 600000).</div>
         <div class="status err" id="manualErr"></div>
     </div>
 </div>
@@ -315,7 +315,7 @@ function applyInit(p) {
     $('statusBar').value = p.statusBar || 'savings';
     $('compactMode').value = p.compactMode || 'auto';
     $('model').value = p.model || '';
-    $('criticalAtTokens').value = p.criticalAtTokens ? String(p.criticalAtTokens) : '';
+    $('compactAtTokens').value = p.compactAtTokens ? String(p.compactAtTokens) : '';
     applyMode();
     if (p.hasKey) {
         $('apiKey').placeholder = '••••••••• (key already saved — paste new to replace)';
@@ -361,10 +361,10 @@ $('btnDisconnect').addEventListener('click', () => {
 
 $('btnSave').addEventListener('click', () => {
     const mode = $('compactMode').value;
-    const criticalAt = parseInt($('criticalAtTokens').value, 10) || 0;
+    const compactAt = parseInt($('compactAtTokens').value, 10) || 0;
     $('manualErr').textContent = '';
-    if (mode === 'manual' && !criticalAt) {
-        $('manualErr').textContent = 'Set a Critical token count (or switch to Auto).';
+    if (mode === 'manual' && !compactAt) {
+        $('manualErr').textContent = 'Set a Compact token count (or switch to Auto).';
         return;
     }
     vscode.postMessage({
@@ -375,7 +375,7 @@ $('btnSave').addEventListener('click', () => {
             statusBar: $('statusBar').value,
             compactMode: mode,
             model: $('model').value.trim(),
-            criticalAtTokens: criticalAt,
+            compactAtTokens: compactAt,
         },
     });
 });

@@ -215,22 +215,24 @@ export class HookInstaller {
 
     // ── Hook files per host ────────────────────────────────────────────
     //
-    // Kiro only — and only ONE hook (the "guard"). It fires on agentStop,
-    // tells the agent to call ide_turn_check (a single MCP tool call), and
-    // short-circuits to "do nothing" if turn_count < 15. So the cost is:
+    // Kiro only — and only ONE hook (Recall). It fires on promptSubmit
+    // (BEFORE the answer), restores memory, and runs the context guard in
+    // the same pass. Because it runs before the reply, the model finishes
+    // the background work and then answers normally — no stray output.
     //
-    //   Turn 1-14:   one MCP tool call per turn ($0.000 LLM, just RTT)
-    //   Turn 15+:    one tool call + agent follows action_prompt
-    //                ≈ $0.005/turn, only when needed
-    //
-    // Total ~$0.03 per session (if a session runs 25+ turns).
-    // Compare v0.1.1 askAgent every turn = $1.50/session.
+    // v0.2.4 history: there used to be a second "Guard" hook on agentStop.
+    // It fired AFTER every turn, forced an askAgent reasoning pass, emitted
+    // a stray "." into the chat, and burned ~1.5 credits/turn even when the
+    // session was idle below turn 15. The old comment here claimed turn
+    // 1-14 cost "$0.000 LLM" — that was wrong; askAgent on Kiro is never
+    // free. The guard logic now lives inside Recall and is gated to
+    // turn >= 15, so the expensive ide_turn_check only runs when relevant.
     //
     // Why not no-hook on Kiro? Because Kiro's MCP integration doesn't pull
     // the assistant audience-tag of a tool response — piggybacking lands
     // but the model treats it as user-visible text and may surface it.
-    // The guard hook gives us a deterministic check the model already
-    // expects to act on.
+    // The hook gives us a deterministic check the model already expects to
+    // act on.
 
     private hookSpecs(): Array<{ path: string; content: string }> {
         if (this.host.id !== 'kiro') return [];
@@ -238,16 +240,13 @@ export class HookInstaller {
         if (!ws) return [];
         return [
             {
-                path: path.join(ws, '.kiro', 'hooks', 'memoryai-guard.kiro.hook'),
-                content: JSON.stringify(KIRO_GUARD_HOOK, null, 2) + '\n',
-            },
-            {
-                // Bootstrap-on-session-start. Kiro has no SessionStart event,
-                // so we use promptSubmit gated to "first turn only" — this is
-                // what restores context after the user opens a new chat
-                // (the save-then-notify flow promises exactly this). Without
-                // it, a fresh Kiro chat starts blank and the restore promise
-                // is broken.
+                // ONE hook only (v0.2.4+). Recall now ALSO carries the
+                // turn/context-guard check. It runs on promptSubmit — BEFORE
+                // the answer — so the background work finishes first and the
+                // model answers normally. The old separate Guard hook fired
+                // on agentStop (AFTER each turn) and forced an askAgent pass
+                // that emitted a stray "." and burned ~1.5 credits per turn
+                // even when idle. Merging removes both problems.
                 path: path.join(ws, '.kiro', 'hooks', 'memoryai-recall.kiro.hook'),
                 content: JSON.stringify(KIRO_RECALL_HOOK, null, 2) + '\n',
             },
@@ -263,6 +262,12 @@ export class HookInstaller {
             // costly). The new memoryai-recall.kiro.hook replaces auto-recall.
             path.join(ws, '.kiro', 'hooks', 'memoryai-auto-recall.kiro.hook'),
             path.join(ws, '.kiro', 'hooks', 'memoryai-auto-capture.kiro.hook'),
+            // v0.2.4: the standalone Guard hook (agentStop + askAgent) is
+            // retired. It fired AFTER every turn and emitted a stray "." plus
+            // ~1.5 credits/turn even when idle. The turn/context check now
+            // lives inside the Recall hook (promptSubmit). Listed here so an
+            // update wipes it from already-connected users automatically.
+            path.join(ws, '.kiro', 'hooks', 'memoryai-guard.kiro.hook'),
         ];
     }
 
@@ -315,15 +320,15 @@ export class HookInstaller {
 }
 
 // ── Hook bodies ────────────────────────────────────────────────────────
-// Single guard hook for Kiro. Fires on agentStop. Tells the agent to call
-// `ide_turn_check` and short-circuit if turn_count < 15.
+// Single hook for Kiro: Recall. Fires on promptSubmit (BEFORE the answer).
+// Restores long-term memory and runs the context guard in the same pass.
 //
-// Why agentStop not promptSubmit:
-//   • promptSubmit forces the agent to read the directive BEFORE responding
-//     → cost = 1 extra reasoning pass per turn
-//   • agentStop runs AFTER the response → reasoning is on the fast-thinking
-//     side of the model state. Most turns end here with `turn_count < 15`
-//     and the agent simply does nothing — minimal cost.
+// Why promptSubmit not agentStop:
+//   • promptSubmit runs BEFORE the reply → the model does the background
+//     work, then answers the user normally. No trailing output.
+//   • agentStop (the old Guard hook) ran AFTER the reply → it forced a
+//     fresh askAgent pass whose only job was "stay silent", which leaked a
+//     stray "." into the chat and cost ~1.5 credits per idle turn.
 //
 // The agent's `ide_turn_check` tool call is itself piggyback-eligible: the
 // MCP server sees the call, evaluates context pressure, and includes any
@@ -334,10 +339,11 @@ const KIRO_RECALL_HOOK = {
     enabled: true,
     name: 'MemoryAI Recall',
     description:
-        'Restores long-term memory at the start of a chat and pulls relevant ' +
-        'context when the user references past work. This is what makes a new ' +
-        'chat continue where the last one left off.',
-    version: '1',
+        'Restores long-term memory at the start of a chat, pulls relevant ' +
+        'context when the user references past work, and runs the context ' +
+        'guard before answering. One hook, fires on promptSubmit so all ' +
+        'background work finishes before the reply.',
+    version: '2',
     when: { type: 'promptSubmit' },
     then: {
         type: 'askAgent',
@@ -354,36 +360,18 @@ const KIRO_RECALL_HOOK = {
             'approach", "why did we", or a project question), call ' +
             'memory_recall with a focused query before answering.\n' +
             '3. Trivial small-talk: skip recall.\n\n' +
+            'CONTEXT GUARD (same turn, before you answer): count the ' +
+            'assistant turns in this conversation. If the count is 15 or ' +
+            'higher, call ide_turn_check with turn_count = (your count), ' +
+            'max_tokens = 200000, and model = (your model name if known), ' +
+            'then follow its action_prompt VERBATIM. Below turn 15, skip the ' +
+            'guard entirely. All saving is silent — when asked to save, call ' +
+            'context_guard_compact and say nothing about it. The ONLY message ' +
+            'you may ever surface is the single "context is full" notice, and ' +
+            'only when the action_prompt explicitly contains it, once per ' +
+            'session.\n\n' +
             'Use what you recall to answer. Do not announce that a memory ' +
             'system exists unless asked.',
-    },
-};
-
-const KIRO_GUARD_HOOK = {
-    enabled: true,
-    name: 'MemoryAI Guard',
-    description:
-        'Single conditional check after each turn. Calls ide_turn_check; ' +
-        'short-circuits below turn 15 so most turns cost nothing.',
-    version: '5',
-    when: { type: 'agentStop' },
-    then: {
-        type: 'askAgent',
-        prompt:
-            'SILENT BACKGROUND TASK — stay invisible to the user.\n\n' +
-            '1. Count the assistant turns in this conversation.\n' +
-            '2. If your turn count is below 15, STOP. Do not call any tools, ' +
-            'do not respond.\n' +
-            '3. If the count is 15 or higher, call ide_turn_check with ' +
-            'turn_count = (your count), max_tokens = 200000, and model = ' +
-            '(your model name if known). Read the response\'s action_prompt ' +
-            'field and follow it VERBATIM.\n\n' +
-            'All saving is silent — when the action_prompt asks you to save, ' +
-            'call context_guard_compact and say nothing. The ONLY message you ' +
-            'may ever show is the single "context is full" notice, and only ' +
-            'when the action_prompt explicitly contains it, shown once per ' +
-            'session. Never invent a /compact prompt the action_prompt did ' +
-            'not ask for. Never mention the memory system otherwise.',
     },
 };
 

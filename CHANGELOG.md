@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.4
+
+- Packaging/version sync release for the manual-mode threshold work
+  (0.2.3 line). No behaviour change beyond 0.2.3 — ensures the published
+  build, the canonical repo, and both marketplaces all carry the same
+  version.
+
+## 0.2.3
+
+- Manual mode now asks for the **compact** point instead of the critical
+  ceiling. You set "Compact At Tokens" (the soft point where saving starts)
+  and the hard critical ceiling is derived automatically at 1.2× of it.
+  Reasoning: the compact point is the number users actually think about
+  ("save around here"); the ceiling is just a safety margin above it.
+  Example: set 160000 → critical at 192000. Replaces the 0.2.2 model where
+  you set critical and compact was derived at 80%.
+
 ## 0.2.2
 
 - Manual mode is now a single number. Removed the "Compact At Tokens" setting

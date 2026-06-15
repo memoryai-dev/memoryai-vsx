@@ -2,7 +2,7 @@
   "name": "memoryai-vsx",
   "displayName": "MemoryAI",
   "description": "One brain. Every AI you use. Forever. Shared long-term memory for Claude, Cursor, AI assistant, and any IDE that follows.",
-  "version": "0.2.2",
+  "version": "0.2.4",
   "publisher": "memoryai",
   "homepage": "https://memoryai.dev",
   "repository": {
@@ -78,10 +78,10 @@
           "enum": ["auto", "manual"],
           "default": "auto",
           "order": 2,
-          "description": "How the context-guard picks its compact/critical triggers. auto = detect the model's window from 'Model' below and pick the trigger automatically (≤200K window → 95%, >200K → 30%). manual = set a single 'Critical At Tokens' below (the hard ceiling where a compact is forced); the soft warning is derived automatically at 80% of that. Note: VS Code's Settings page always shows every field; the unrelated fields are simply ignored in the mode you are not using. The MemoryAI Connect panel hides them for you.",
+          "description": "How the context-guard picks its compact/critical triggers. auto = detect the model's window from 'Model' below and pick the trigger automatically (≤200K window → 95%, >200K → 30%). manual = set a single 'Compact At Tokens' below (the soft point where the guard starts saving); the hard critical ceiling is derived automatically at 1.2× of that. Note: VS Code's Settings page always shows every field; the unrelated fields are simply ignored in the mode you are not using. The MemoryAI Connect panel hides them for you.",
           "enumDescriptions": [
             "Auto-detect from the model name and pick the trigger automatically.",
-            "Use the exact critical token count you set below (compact derived at 80%)."
+            "Use the exact compact token count you set below (critical derived at 1.2×)."
           ]
         },
         "memoryai.model": {
@@ -91,12 +91,12 @@
           "description": "Auto mode only (ignored when Compact Mode = manual). Your model name so MemoryAI auto-detects its context window and picks the right compact trigger (≤200K window → 95%, >200K → 30%). Examples: claude-sonnet-4-6, claude-opus-4-8[1m], gemini-1.5-pro. Leave blank to use the 200K default.",
           "examples": ["claude-sonnet-4-6", "claude-opus-4-8[1m]", "gpt-4o", "gemini-1.5-pro"]
         },
-        "memoryai.criticalAtTokens": {
+        "memoryai.compactAtTokens": {
           "type": "number",
           "default": 0,
           "minimum": 0,
           "order": 4,
-          "description": "Manual mode only (ignored when Compact Mode = auto). The hard ceiling in tokens at which the guard forces a compact. The soft compact warning fires automatically at 80% of this. Example: on a 1M-window model set 200000 (→ warns at 160000) or 600000 (→ warns at 480000). 0 = let the server decide."
+          "description": "Manual mode only (ignored when Compact Mode = auto). The soft point in tokens at which the guard starts saving (compact). The hard critical ceiling that forces a compact fires automatically at 1.2× of this. Example: on a 1M-window model set 160000 (→ critical at 192000) or 500000 (→ critical at 600000). 0 = let the server decide."
         },
         "memoryai.privateMode": {
           "type": "boolean",
