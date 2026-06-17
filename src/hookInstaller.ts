@@ -79,7 +79,7 @@ export class HookInstaller {
 
             // v0.1.3: ONE guard hook on Kiro (turn>=15 conditional). Other
             // hosts use rules files written below.
-            for (const hookSpec of this.hookSpecs()) {
+            for (const hookSpec of this.hookSpecs(inputs)) {
                 if (this.writeFileIfChanged(hookSpec.path, hookSpec.content)) wrote.push(hookSpec.path);
                 else skipped.push(hookSpec.path);
             }
@@ -107,7 +107,7 @@ export class HookInstaller {
         // Wipe both current hook specs (none in v0.1.2+) and any legacy
         // ones from earlier versions that did install askAgent hooks.
         const allHookPaths = [
-            ...this.hookSpecs().map((s) => s.path),
+            ...this.hookSpecs(undefined).map((s) => s.path),
             ...this.legacyHookPaths(),
             ...this.ruleSpecs(undefined).map((s) => s.path),
         ];
@@ -234,7 +234,7 @@ export class HookInstaller {
     // The hook gives us a deterministic check the model already expects to
     // act on.
 
-    private hookSpecs(): Array<{ path: string; content: string }> {
+    private hookSpecs(inputs?: ConnectInputs): Array<{ path: string; content: string }> {
         if (this.host.id !== 'kiro') return [];
         const ws = this.workspaceRoot();
         if (!ws) return [];
@@ -248,7 +248,7 @@ export class HookInstaller {
                 // that emitted a stray "." and burned ~1.5 credits per turn
                 // even when idle. Merging removes both problems.
                 path: path.join(ws, '.kiro', 'hooks', 'memoryai-recall.kiro.hook'),
-                content: JSON.stringify(KIRO_RECALL_HOOK, null, 2) + '\n',
+                content: JSON.stringify(buildKiroRecallHook(inputs), null, 2) + '\n',
             },
         ];
     }
@@ -279,13 +279,13 @@ export class HookInstaller {
         if (this.host.id === 'cursor') {
             return [{
                 path: path.join(ws, '.cursor', 'rules', 'memoryai.mdc'),
-                content: CURSOR_RULES,
+                content: buildCursorRules(inputs),
             }];
         }
         if (this.host.id === 'windsurf') {
             return [{
                 path: path.join(ws, '.windsurfrules'),
-                content: WINDSURF_RULES,
+                content: buildWindsurfRules(inputs),
             }];
         }
         return [];
@@ -335,47 +335,88 @@ export class HookInstaller {
 // pending directive (from RecallQueue or compact escalation) inline. Thus
 // even when the hook fires, the cost is still bounded by piggybacking.
 
-const KIRO_RECALL_HOOK = {
-    enabled: true,
-    name: 'MemoryAI Recall',
-    description:
-        'Restores long-term memory at the start of a chat, pulls relevant ' +
-        'context when the user references past work, and runs the context ' +
-        'guard before answering. One hook, fires on promptSubmit so all ' +
-        'background work finishes before the reply.',
-    version: '2',
-    when: { type: 'promptSubmit' },
-    then: {
-        type: 'askAgent',
-        prompt:
-            'Before answering, make sure you have the relevant long-term ' +
-            'memory. Do this quietly and integrate it naturally — never dump ' +
-            'raw tool output.\n\n' +
-            '1. FIRST TURN of this chat (no prior assistant messages yet): ' +
-            'call memory_bootstrap ONCE to load preferences, decisions, ' +
-            'identity, and recent project context. This is how a freshly ' +
-            'opened chat picks up where the previous one left off.\n' +
-            '2. If the user references past work, decisions, preferences, or ' +
-            'anything that might be stored ("what did we", "last time", "our ' +
-            'approach", "why did we", or a project question), call ' +
-            'memory_recall with a focused query before answering.\n' +
-            '3. Trivial small-talk: skip recall.\n\n' +
-            'CONTEXT GUARD (same turn, before you answer): count the ' +
-            'assistant turns in this conversation. If the count is 15 or ' +
-            'higher, call ide_turn_check with turn_count = (your count), ' +
-            'max_tokens = 200000, and model = (your model name if known), ' +
-            'then follow its action_prompt VERBATIM. Below turn 15, skip the ' +
-            'guard entirely. All saving is silent — when asked to save, call ' +
-            'context_guard_compact and say nothing about it. The ONLY message ' +
-            'you may ever surface is the single "context is full" notice, and ' +
-            'only when the action_prompt explicitly contains it, once per ' +
-            'session.\n\n' +
-            'Use what you recall to answer. Do not announce that a memory ' +
-            'system exists unless asked.',
-    },
-};
+/**
+ * Render the per-mode guard instruction block.
+ *
+ * AUTO  → tell the agent to pass model="<name>" (no max_tokens). Server
+ *         resolves the real window from the model name (1M for [1m] suffix,
+ *         200K for Sonnet, etc.) and picks the adaptive trigger.
+ * MANUAL → tell the agent to pass compact_at_tokens=<X> + critical_at_tokens=<Y>
+ *         (no max_tokens). Server applies the absolute thresholds verbatim.
+ *
+ * In both modes we ALSO ask the agent to pass avg_tokens_per_turn=16000
+ * because IDE coding turns (read files, edit, run tests) are roughly 2× the
+ * server's chat-tuned default of 8000. With the default the bot only ever
+ * "sees" half of the real context, so a manual 250K threshold never fires
+ * even when the host's own meter shows 28%. 16K is the calibrated floor for
+ * Kiro/Cursor/Windsurf — closer to reality, fires at the right time.
+ *
+ * The previous prompt hardcoded `max_tokens=200000` which silently overrode
+ * a 1M-window model's adaptive trigger AND clamped a 250K manual threshold
+ * down to ~199K via the server-side window safety cap. Removed.
+ */
+function buildGuardLine(inputs?: ConnectInputs): string {
+    const argsList: string[] = ['turn_count = (your count)'];
+    argsList.push('avg_tokens_per_turn = 16000');
+    if (inputs?.compactAtTokens && inputs.compactAtTokens > 0) {
+        const compact = Math.round(inputs.compactAtTokens);
+        const critical = Math.round(compact * 1.2);
+        argsList.push(`compact_at_tokens = ${compact}`);
+        argsList.push(`critical_at_tokens = ${critical}`);
+    } else if (inputs?.model && inputs.model.trim()) {
+        argsList.push(`model = "${inputs.model.trim()}"`);
+    } else {
+        argsList.push('model = (your model name if known)');
+    }
+    return argsList.join(', ');
+}
 
-const CURSOR_RULES = `---
+function buildKiroRecallHook(inputs?: ConnectInputs) {
+    const guardArgs = buildGuardLine(inputs);
+    return {
+        enabled: true,
+        name: 'MemoryAI Recall',
+        description:
+            'Restores long-term memory at the start of a chat, pulls relevant ' +
+            'context when the user references past work, and runs the context ' +
+            'guard before answering. One hook, fires on promptSubmit so all ' +
+            'background work finishes before the reply.',
+        version: '2',
+        when: { type: 'promptSubmit' },
+        then: {
+            type: 'askAgent',
+            prompt:
+                'Before answering, make sure you have the relevant long-term ' +
+                'memory. Do this quietly and integrate it naturally — never dump ' +
+                'raw tool output.\n\n' +
+                '1. FIRST TURN of this chat (no prior assistant messages yet): ' +
+                'call memory_bootstrap ONCE to load preferences, decisions, ' +
+                'identity, and recent project context. This is how a freshly ' +
+                'opened chat picks up where the previous one left off.\n' +
+                '2. If the user references past work, decisions, preferences, or ' +
+                'anything that might be stored ("what did we", "last time", "our ' +
+                'approach", "why did we", or a project question), call ' +
+                'memory_recall with a focused query before answering.\n' +
+                '3. Trivial small-talk: skip recall.\n\n' +
+                'CONTEXT GUARD (same turn, before you answer): count the ' +
+                'assistant turns in this conversation. If the count is 15 or ' +
+                'higher, call ide_turn_check with ' + guardArgs + ', ' +
+                'then follow its action_prompt VERBATIM. Do NOT pass max_tokens ' +
+                '— the server resolves it from model/thresholds. Below turn 15, ' +
+                'skip the guard entirely. All saving is silent — when asked to ' +
+                'save, call context_guard_compact and say nothing about it. The ' +
+                'ONLY message you may ever surface is the single "context is ' +
+                'full" notice, and only when the action_prompt explicitly ' +
+                'contains it, once per session.\n\n' +
+                'Use what you recall to answer. Do not announce that a memory ' +
+                'system exists unless asked.',
+        },
+    };
+}
+
+function buildCursorRules(inputs?: ConnectInputs): string {
+    const guardArgs = buildGuardLine(inputs);
+    return `---
 description: MemoryAI auto-recall and auto-capture (calls MCP server "memoryai")
 alwaysApply: true
 ---
@@ -393,16 +434,18 @@ After each response:
    mistake (pitfall), or reusable procedure, call \`memory_store\` with the
    correct memory_type. Never store secrets.
 2. Count assistant turns in this conversation and call \`ide_turn_check\` with
-   turn_count, max_tokens=200000, and model (if known). Follow the
-   action_prompt verbatim.
+   ${guardArgs}. Do NOT pass max_tokens. Follow the action_prompt verbatim.
 
 Memory capture runs silently. The ONE and only exception: the single
 "context is full" notice — show it once per session, and only when the
 action_prompt explicitly contains it. All saving is invisible; never mention
 the memory system otherwise.
 `;
+}
 
-const WINDSURF_RULES = `# MemoryAI auto-memory rules (calls MCP server "memoryai")
+function buildWindsurfRules(inputs?: ConnectInputs): string {
+    const guardArgs = buildGuardLine(inputs);
+    return `# MemoryAI auto-memory rules (calls MCP server "memoryai")
 
 Before answering each user message:
 1. If first turn, call memory_bootstrap once.
@@ -413,10 +456,11 @@ After each response:
 1. If the turn produced a decision, preference, important fact, lesson from a
    mistake (pitfall), or reusable procedure, call memory_store with the right
    memory_type. Never store secrets.
-2. Count assistant turns and call ide_turn_check (turn_count, max_tokens=200000,
-   model if known). Follow action_prompt verbatim.
+2. Count assistant turns and call ide_turn_check with ${guardArgs}. Do NOT
+   pass max_tokens. Follow action_prompt verbatim.
 
 Capture runs silently. The ONLY exception: the single "context is full"
 notice — show it once per session when the action_prompt contains it. All
 saving is invisible.
 `;
+}

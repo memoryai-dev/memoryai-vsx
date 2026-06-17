@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.5
+
+- Pass connect inputs (endpoint / api key / model) into the Kiro recall hook
+  + Cursor / Windsurf rules so the prompts can reference the user's actual
+  model when the agent calls `ide_turn_check`. Same wiring already used by
+  the MCP env block; this aligns the hook/rules path with it.
+
 ## 0.2.4
 
 - Packaging/version sync release for the manual-mode threshold work
