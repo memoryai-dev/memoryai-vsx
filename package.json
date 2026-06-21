@@ -2,7 +2,7 @@
   "name": "memoryai-vsx",
   "displayName": "MemoryAI",
   "description": "One brain. Every AI you use. Forever. Shared long-term memory for Claude, Cursor, AI assistant, and any IDE that follows.",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "publisher": "memoryai",
   "homepage": "https://memoryai.dev",
   "repository": {

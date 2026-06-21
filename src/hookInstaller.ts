@@ -339,11 +339,16 @@ Calls the MCP server "memoryai". Window hint for this host: ${maxTokens} tokens.
 
 ## Resume first (start of every session)
 1. On the FIRST turn, call memory_bootstrap once.
-2. Then call memory_recall with a query like "current work snapshot / what was
-   I doing" and, when present, CONTINUE the most recent work-snapshot (they are
-   time-ordered — prefer the newest). This is how a new chat opened after a
-   /compact or a fresh window resumes the in-progress job seamlessly.
-3. If the user references past work/decisions, recall before answering.
+2. Then call memory_recall SPECIFICALLY for the latest work snapshot:
+     query: "current work snapshot — what was I doing",
+     tags: ["work-snapshot"], since: "24h", limit: 3.
+   This narrows the pool to recent snapshots so the NEWEST one ranks first
+   (recall is time-weighted within a filtered set). CONTINUE that most-recent
+   snapshot — this is how a chat opened after a /compact or a fresh window
+   resumes the in-progress job seamlessly. If nothing returns, widen: drop the
+   since filter and recall again.
+3. If the user references past work/decisions, recall (without the snapshot
+   tag) before answering.
 4. Skip recall on trivial small-talk.
 
 ## Capture as you go (silent)

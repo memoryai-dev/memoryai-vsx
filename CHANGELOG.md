@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.3 — Snapshot-precise resume for GUI hosts (2026-06-21)
+
+- The 15-turn guard's resume step now recalls the latest work snapshot
+  precisely: memory_recall with tags=["work-snapshot"], since="24h", limit=3.
+  Narrowing the pool to recent snapshots lets the newest rank first (recall is
+  time-weighted within a filtered set), instead of competing against the whole
+  memory pool where semantic score could surface a stale snapshot. Verified the
+  server's recall_chunks already accepts tags + since, so no server change was
+  needed.
+
 ## 0.5.2 — 15-turn work-snapshot guard for GUI hosts (2026-06-21)
 
 - For IDEs that hide their context window from extensions (Windsurf, Cursor,
