@@ -325,6 +325,15 @@ async function findTranscript(out: Logger, context: vscode.ExtensionContext): Pr
         { label: 'Kiro globalStorage (linux)', dir: path.join(home, '.config', 'Kiro', 'User', 'globalStorage'), depth: 3 },
         { label: 'Kiro workspaceStorage (linux)', dir: path.join(home, '.config', 'Kiro', 'User', 'workspaceStorage'), depth: 3 },
         { label: 'Kiro globalStorage (mac)', dir: path.join(home, 'Library', 'Application Support', 'Kiro', 'User', 'globalStorage'), depth: 3 },
+        // Windsurf (VS Code fork). Chat/cascade state lives under the standard
+        // VS Code User dirs for the "Windsurf" product, plus the Codeium home.
+        { label: 'Windsurf globalStorage (win)', dir: path.join(home, 'AppData', 'Roaming', 'Windsurf', 'User', 'globalStorage'), depth: 3 },
+        { label: 'Windsurf workspaceStorage (win)', dir: path.join(home, 'AppData', 'Roaming', 'Windsurf', 'User', 'workspaceStorage'), depth: 3 },
+        { label: 'Windsurf globalStorage (linux)', dir: path.join(home, '.config', 'Windsurf', 'User', 'globalStorage'), depth: 3 },
+        { label: 'Windsurf workspaceStorage (linux)', dir: path.join(home, '.config', 'Windsurf', 'User', 'workspaceStorage'), depth: 3 },
+        { label: 'Windsurf globalStorage (mac)', dir: path.join(home, 'Library', 'Application Support', 'Windsurf', 'User', 'globalStorage'), depth: 3 },
+        { label: 'Windsurf workspaceStorage (mac)', dir: path.join(home, 'Library', 'Application Support', 'Windsurf', 'User', 'workspaceStorage'), depth: 3 },
+        { label: '~/.codeium', dir: path.join(home, '.codeium'), depth: 4 },
     ];
 
     const hits: Array<{ file: string; size: number; transcriptish: boolean }> = [];
@@ -366,8 +375,16 @@ async function findTranscript(out: Logger, context: vscode.ExtensionContext): Pr
     // in state.vscdb, which is the likely real home if no JSONL turned up.
     const vscdb: string[] = [];
     try {
-        const wsRoot = path.join(home, 'AppData', 'Roaming', 'Kiro', 'User', 'workspaceStorage');
-        if (fs.existsSync(wsRoot)) {
+        const wsRoots = [
+            path.join(home, 'AppData', 'Roaming', 'Kiro', 'User', 'workspaceStorage'),
+            path.join(home, 'AppData', 'Roaming', 'Windsurf', 'User', 'workspaceStorage'),
+            path.join(home, '.config', 'Kiro', 'User', 'workspaceStorage'),
+            path.join(home, '.config', 'Windsurf', 'User', 'workspaceStorage'),
+            path.join(home, 'Library', 'Application Support', 'Kiro', 'User', 'workspaceStorage'),
+            path.join(home, 'Library', 'Application Support', 'Windsurf', 'User', 'workspaceStorage'),
+        ];
+        for (const wsRoot of wsRoots) {
+            if (!fs.existsSync(wsRoot)) continue;
             for (const d of fs.readdirSync(wsRoot)) {
                 const db = path.join(wsRoot, d, 'state.vscdb');
                 if (fs.existsSync(db)) vscdb.push(db);

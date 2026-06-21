@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.2 — 15-turn work-snapshot guard for GUI hosts (2026-06-21)
+
+- For IDEs that hide their context window from extensions (Windsurf, Cursor,
+  VS Code + Copilot), the context guard now runs as a unified, rules-driven
+  "15-turn work-snapshot" loop instead of nothing. The agent itself: every 15
+  assistant turns saves ONE consolidated work-snapshot chunk (goal · decisions
+  · current step · next step; tagged work-snapshot, importance 0.9), runs
+  ide_turn_check, and surfaces a single handoff line telling the user they can
+  /compact or open a new chat. A fresh session bootstraps + recalls the most
+  recent snapshot first, so the in-progress job resumes seamlessly.
+- Added VS Code support for the rules file: writes
+  .github/copilot-instructions.md (previously only the MCP server was wired for
+  VS Code). Windsurf (.windsurfrules) and Cursor (.cursor/rules/memoryai.mdc)
+  share the exact same guard body.
+- This is the "light" guard for closed GUIs — memory + resume are reliable; the
+  precise %-based auto-save/auto-spawn remains exclusive to hosts that expose
+  context (Kiro, Claude Code), which keep the full ContextMonitor / autopilot.
+
 ## 0.5.1 — Auto-spawn + active-session fix (2026-06-21)
 
 - **Auto-spawn at the idle turn boundary (Kiro).** When the live conversation

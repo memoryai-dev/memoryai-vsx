@@ -294,65 +294,83 @@ export class HookInstaller {
         if (this.host.id === 'cursor') {
             return [{
                 path: path.join(ws, '.cursor', 'rules', 'memoryai.mdc'),
-                content: this.generateCursorRules(maxTokens),
+                content: '---\n'
+                    + 'description: MemoryAI shared memory + 15-turn work-snapshot guard\n'
+                    + 'alwaysApply: true\n'
+                    + '---\n\n'
+                    + this.guardRulesBody(maxTokens),
             }];
         }
         if (this.host.id === 'windsurf') {
             return [{
                 path: path.join(ws, '.windsurfrules'),
-                content: this.generateWindsurfRules(maxTokens),
+                content: this.guardRulesBody(maxTokens),
+            }];
+        }
+        if (this.host.id === 'vscode') {
+            // VS Code + Copilot reads repo-level custom instructions from
+            // .github/copilot-instructions.md. Same body so the 15-turn guard
+            // applies here too.
+            return [{
+                path: path.join(ws, '.github', 'copilot-instructions.md'),
+                content: this.guardRulesBody(maxTokens),
             }];
         }
         return [];
     }
 
-    private generateCursorRules(maxTokens: number): string {
-        return `---
-description: MemoryAI auto-recall and auto-capture (calls MCP server "memoryai")
-alwaysApply: true
----
+    /**
+     * Shared "15-turn work-snapshot guard" rules body for GUI hosts that don't
+     * expose context to an extension (Windsurf, Cursor, VS Code+Copilot). The
+     * agent itself runs the loop, since these IDEs hide their context window.
+     *
+     * Design (founder spec):
+     *   • Every 15 assistant turns, save ONE work-snapshot chunk capturing the
+     *     in-progress job (goal, decisions, current step, next step) so a fresh
+     *     session can resume perfectly. Tagged + timestamped; newest wins.
+     *   • Tell the user it's saved and they may /compact or open a new chat.
+     *   • On a new session / after compact: bootstrap + recall pull the most
+     *     RECENT work-snapshot first (time-ordered) so work resumes seamlessly.
+     */
+    private guardRulesBody(maxTokens: number): string {
+        return `# MemoryAI — shared memory + 15-turn work-snapshot guard
 
-Before answering each user message:
+Calls the MCP server "memoryai". Window hint for this host: ${maxTokens} tokens.
 
-1. If this is the first turn, call \`memory_bootstrap\` once.
-2. If the message references past work, decisions, or anything that might be
-   stored, call \`memory_recall\` with a focused query first, then answer.
-3. If the message is small-talk, skip recall.
+## Resume first (start of every session)
+1. On the FIRST turn, call memory_bootstrap once.
+2. Then call memory_recall with a query like "current work snapshot / what was
+   I doing" and, when present, CONTINUE the most recent work-snapshot (they are
+   time-ordered — prefer the newest). This is how a new chat opened after a
+   /compact or a fresh window resumes the in-progress job seamlessly.
+3. If the user references past work/decisions, recall before answering.
+4. Skip recall on trivial small-talk.
 
-After each response:
+## Capture as you go (silent)
+- When a turn produces a decision, preference, important fact, lesson from a
+  mistake (pitfall), or reusable procedure, call memory_store with the right
+  memory_type. Never store secrets. This runs silently.
 
-1. If the turn produced a decision, preference, important fact, lesson from a
-   mistake (pitfall), or reusable procedure, call \`memory_store\` with the
-   correct memory_type. Never store secrets.
-2. Count assistant turns in this conversation and call \`ide_turn_check\` with
-   turn_count, max_tokens=${maxTokens}, and model (if known). Follow the
-   action_prompt verbatim.
+## Every 15 assistant turns — work snapshot + handoff
+Count your assistant turns. Each time the count reaches a multiple of 15
+(15, 30, 45 ...):
+1. Call memory_store with ONE consolidated work-snapshot chunk:
+     content_type: "todo", memory_type: "goal", importance: 0.9,
+     tags: ["work-snapshot", "resume"],
+     content: a compact summary of — the GOAL, key DECISIONS so far, the
+     CURRENT step, and the NEXT step. Write it so a fresh session could pick up
+     with zero extra context.
+2. Also call ide_turn_check (turn_count, max_tokens=${maxTokens}, model if
+   known) and follow its action_prompt verbatim.
+3. Then surface ONE short line to the user (this is the only allowed notice):
+     "Saved a work snapshot to MemoryAI (turn N). You can /compact or open a
+      new chat — I'll recall it and continue exactly where we left off."
 
-Memory capture runs silently. The ONE and only exception: the single
-"context is full" notice — show it once per session, and only when the
-action_prompt explicitly contains it. All saving is invisible; never mention
-the memory system otherwise.
-`;
-    }
-
-    private generateWindsurfRules(maxTokens: number): string {
-        return `# MemoryAI auto-memory rules (calls MCP server "memoryai")
-
-Before answering each user message:
-1. If first turn, call memory_bootstrap once.
-2. If message references past work or stored items, call memory_recall first.
-3. Skip recall on trivial small-talk.
-
-After each response:
-1. If the turn produced a decision, preference, important fact, lesson from a
-   mistake (pitfall), or reusable procedure, call memory_store with the right
-   memory_type. Never store secrets.
-2. Count assistant turns and call ide_turn_check (turn_count, max_tokens=${maxTokens},
-   model if known). Follow action_prompt verbatim.
-
-Capture runs silently. The ONLY exception: the single "context is full"
-notice — show it once per session when the action_prompt contains it. All
-saving is invisible.
+## Rules
+- All saving is silent except the single handoff line above.
+- The work snapshot is a fresh chunk each 15-turn mark; recall always prefers
+  the newest, so resume reflects the latest state.
+- Never mention the memory system otherwise.
 `;
     }
 
