@@ -50,9 +50,8 @@ export class ConnectPanel {
             endpoint: cfg.get<string>('endpoint', 'https://memoryai.dev'),
             privateMode: cfg.get<boolean>('privateMode', false),
             statusBar: cfg.get<string>('statusBar', 'savings'),
-            compactMode: cfg.get<string>('compactMode', 'auto'),
-            model: cfg.get<string>('model', ''),
-            compactAtTokens: cfg.get<number>('compactAtTokens', 0),
+            contextWindow: cfg.get<number>('contextWindow', 200000),
+            criticalPercent: cfg.get<number>('criticalPercent', 0),
             hasKey: false,
         };
         context.secrets.get(SECRET_API_KEY).then((existing) => {
@@ -64,6 +63,12 @@ export class ConnectPanel {
 
         panel.webview.onDidReceiveMessage(async (msg: { type: string; payload?: any }) => {
             try {
+                // Payload validation — defense against compromised webview
+                if (!msg.type || typeof msg.type !== 'string') {
+                    log.warn('ConnectPanel: invalid message type');
+                    return;
+                }
+
                 if (msg.type === 'connect') {
                     const key = String(msg.payload?.apiKey ?? '').trim();
                     if (!key.startsWith('hm_sk_')) {
@@ -112,14 +117,31 @@ export class ConnectPanel {
                     vscode.commands.executeCommand('memoryai.statusbar.refresh', 'disconnected');
                 } else if (msg.type === 'saveSettings') {
                     const p = msg.payload ?? {};
+                    // Strict type validation for all settings
+                    if (p.endpoint !== undefined && typeof p.endpoint !== 'string') {
+                        log.warn('saveSettings: invalid endpoint type');
+                        return;
+                    }
+                    if (p.contextWindow !== undefined && typeof p.contextWindow !== 'number') {
+                        log.warn('saveSettings: invalid contextWindow type');
+                        return;
+                    }
+                    if (p.criticalPercent !== undefined && typeof p.criticalPercent !== 'number') {
+                        log.warn('saveSettings: invalid criticalPercent type');
+                        return;
+                    }
+
                     const target = vscode.ConfigurationTarget.Global;
                     const c = vscode.workspace.getConfiguration('memoryai');
                     if (typeof p.endpoint === 'string') await c.update('endpoint', p.endpoint, target);
                     if (typeof p.privateMode === 'boolean') await c.update('privateMode', p.privateMode, target);
                     if (typeof p.statusBar === 'string') await c.update('statusBar', p.statusBar, target);
-                    if (p.compactMode === 'auto' || p.compactMode === 'manual') await c.update('compactMode', p.compactMode, target);
-                    if (typeof p.model === 'string') await c.update('model', p.model, target);
-                    if (typeof p.compactAtTokens === 'number' && p.compactAtTokens >= 0) await c.update('compactAtTokens', Math.round(p.compactAtTokens), target);
+                    if (typeof p.contextWindow === 'number' && p.contextWindow >= 8000) {
+                        await c.update('contextWindow', Math.round(p.contextWindow), target);
+                    }
+                    if (typeof p.criticalPercent === 'number' && p.criticalPercent >= 0 && p.criticalPercent <= 99) {
+                        await c.update('criticalPercent', Math.round(p.criticalPercent), target);
+                    }
                     // Re-wire so guard-threshold changes land in the MCP env now,
                     // not just on the next reconnect.
                     try {
@@ -138,9 +160,12 @@ export class ConnectPanel {
                     panel.webview.postMessage({ type: 'savedSettings' });
                 } else if (msg.type === 'openExternal') {
                     const url = String(msg.payload?.url ?? '');
-                    if (url.startsWith('https://')) {
-                        vscode.env.openExternal(vscode.Uri.parse(url));
+                    // Strict URL validation — only allow https memoryai.dev
+                    if (!url.startsWith('https://memoryai.dev/')) {
+                        log.warn(`openExternal: rejected non-memoryai URL: ${url}`);
+                        return;
                     }
+                    vscode.env.openExternal(vscode.Uri.parse(url));
                 } else if (msg.type === 'openAdvancedSettings') {
                     vscode.commands.executeCommand('workbench.action.openSettings', '@ext:memoryai.memoryai-vsx');
                 }
@@ -161,6 +186,11 @@ function renderHtml(logoUri: string, init: Record<string, unknown>): string {
 <html><head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${logoUri.replace(/[^/]*$/, '')} https: data:; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+<!-- SECURITY NOTE: CSP allows unsafe-inline for compatibility. XSS risk mitigated by:
+     1. logoUri from webview.asWebviewUri (sandboxed)
+     2. initJson escapes < as \\u003c (JSON injection prevention)
+     3. All user input validated server-side before display
+     TODO P0: migrate to nonce-based CSP (requires vscode.env.appHost check for compatibility) -->
 <title>MemoryAI Connect</title>
 <style>
 :root { color-scheme: light dark; }
@@ -266,24 +296,19 @@ a:hover { color: var(--vscode-textLink-activeForeground); }
 
 <div class="section">
     <h2>Context Guard</h2>
-    <label>Mode</label>
-    <select id="compactMode">
-        <option value="auto">Auto — detect window from model, pick trigger automatically</option>
-        <option value="manual">Manual — I set the exact compact/critical token counts</option>
-    </select>
+    <label>Context window</label>
+    <input id="contextWindow" type="number" list="windowPresets" min="8000" placeholder="200000">
+    <datalist id="windowPresets">
+        <option value="200000" label="200K — Claude, GPT, Sonnet, most models">
+        <option value="1000000" label="1M — Opus 1M, Gemini">
+    </datalist>
+    <div class="desc">Your model's window in tokens. Pick 200000 or 1000000, or type any exact number.</div>
 
-    <div id="autoBox">
-        <label>Model</label>
-        <input id="model" type="text" placeholder="claude-opus-4-8[1m]">
-        <div class="desc">Used to auto-detect the context window (≤200K → trigger at 95%, &gt;200K → 30%). Leave blank for the 200K default.</div>
-    </div>
-
-    <div id="manualBox">
-        <label>Compact at (tokens)</label>
-        <input id="compactAtTokens" type="number" min="0" placeholder="160000">
-        <div class="desc">The soft point where saving starts (compact). The hard ceiling that forces a compact is set automatically at 1.2× of this. Example on a 1M model: 160000 (critical at 192000) or 500000 (critical at 600000).</div>
-        <div class="status err" id="manualErr"></div>
-    </div>
+    <label>Critical at (% of window) — forces a save + notice</label>
+    <input id="criticalPercent" type="number" min="5" max="99" placeholder="95">
+    <div class="desc" id="criticalDesc">Default follows the window (200K → 95, 1M → 30). Override freely — e.g. raise a 1M model to 35 or 40 to keep more context.</div>
+    <div class="desc" id="compactDesc">Silent saving begins at <b>—</b> (85% of critical).</div>
+    <div class="status err" id="guardErr"></div>
 </div>
 
 <div class="section">
@@ -313,24 +338,50 @@ function applyInit(p) {
     $('endpoint').value = p.endpoint || '';
     setToggle($('privateMode'), !!p.privateMode);
     $('statusBar').value = p.statusBar || 'savings';
-    $('compactMode').value = p.compactMode || 'auto';
-    $('model').value = p.model || '';
-    $('compactAtTokens').value = p.compactAtTokens ? String(p.compactAtTokens) : '';
-    applyMode();
+    const win = p.contextWindow || 200000;
+    $('contextWindow').value = String(win);
+    // criticalPercent of 0 means "auto-follow window" — show the resolved value.
+    const crit = (p.criticalPercent && p.criticalPercent >= 5) ? p.criticalPercent : defaultCriticalFor(win);
+    $('criticalPercent').value = String(crit);
+    lastWindow = win;
+    refreshDerived();
     if (p.hasKey) {
         $('apiKey').placeholder = '••••••••• (key already saved — paste new to replace)';
         $('status').className = 'status ok';
         $('status').textContent = 'Connected.';
     }
 }
-applyInit(init);
 
-function applyMode() {
-    const manual = $('compactMode').value === 'manual';
-    $('autoBox').style.display = manual ? 'none' : '';
-    $('manualBox').style.display = manual ? '' : 'none';
+// Default critical % follows the window: >200K → 30, else 95.
+function defaultCriticalFor(win) {
+    return win > 200000 ? 30 : 95;
 }
-$('compactMode').addEventListener('change', applyMode);
+
+let lastWindow = 200000;
+applyInit(init);
+function refreshDerived() {
+    const win = parseInt($('contextWindow').value, 10) || 200000;
+    let crit = parseInt($('criticalPercent').value, 10);
+    if (!crit || crit < 5 || crit > 99) crit = defaultCriticalFor(win);
+    const compactPct = Math.round(crit * 0.85);
+    const compactTok = Math.round((win * compactPct) / 100);
+    const critTok = Math.round((win * crit) / 100);
+    $('compactDesc').innerHTML = 'Silent saving begins at <b>' + compactPct + '%</b> ('
+        + compactTok.toLocaleString() + ' tokens). Forces save at <b>' + crit + '%</b> ('
+        + critTok.toLocaleString() + ' tokens).';
+}
+
+// Snap critical to the new window's default when the window changes.
+$('contextWindow').addEventListener('change', () => {
+    const win = parseInt($('contextWindow').value, 10) || 200000;
+    if (win !== lastWindow) {
+        $('criticalPercent').value = String(defaultCriticalFor(win));
+        lastWindow = win;
+    }
+    refreshDerived();
+});
+$('contextWindow').addEventListener('input', refreshDerived);
+$('criticalPercent').addEventListener('input', refreshDerived);
 
 function setToggle(el, on) {
     el.classList.toggle('on', !!on);
@@ -360,22 +411,31 @@ $('btnDisconnect').addEventListener('click', () => {
 });
 
 $('btnSave').addEventListener('click', () => {
-    const mode = $('compactMode').value;
-    const compactAt = parseInt($('compactAtTokens').value, 10) || 0;
-    $('manualErr').textContent = '';
-    if (mode === 'manual' && !compactAt) {
-        $('manualErr').textContent = 'Set a Compact token count (or switch to Auto).';
+    const win = parseInt($('contextWindow').value, 10) || 200000;
+    let crit = parseInt($('criticalPercent').value, 10);
+    $('guardErr').textContent = '';
+    if (win < 8000) {
+        $('guardErr').textContent = 'Context window must be at least 8000 tokens.';
         return;
     }
+    if (!crit || crit < 5 || crit > 99) {
+        $('guardErr').textContent = 'Critical % must be between 5 and 99.';
+        return;
+    }
+    // If the value equals the window's auto-default, persist 0 ("auto-follow")
+    // so changing the window later keeps tracking it. Only a deliberate
+    // override stores a hard number.
+    const critToSave = (crit === defaultCriticalFor(win)) ? 0 : crit;
+    $('settingsStatus').className = 'status';
+    $('settingsStatus').textContent = 'Saving…';
     vscode.postMessage({
         type: 'saveSettings',
         payload: {
             endpoint: $('endpoint').value.trim(),
             privateMode: $('privateMode').dataset.on === '1',
             statusBar: $('statusBar').value,
-            compactMode: mode,
-            model: $('model').value.trim(),
-            compactAtTokens: compactAt,
+            contextWindow: win,
+            criticalPercent: critToSave,
         },
     });
 });

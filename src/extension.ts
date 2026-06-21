@@ -28,6 +28,8 @@ import { ConnectPanel } from './connectPanel';
 import { HookInstaller } from './hookInstaller';
 import { HealthMonitor, HealthSnapshot } from './healthMonitor';
 import { HealthPanel } from './healthPanel';
+import { ContextMonitor } from './contextMonitor';
+import { runSpawnProbe } from './probe';
 
 let logger: Logger;
 let api: ApiClient;
@@ -35,6 +37,13 @@ let host: HostAdapter;
 let statusBar: StatusBar;
 let installer: HookInstaller;
 let health: HealthMonitor;
+let contextMonitor: ContextMonitor;
+
+// Context-pressure dedup: remember the `setAt` of the last episode we already
+// notified, so the same episode doesn't re-warn across the 60s polls. A new
+// episode (different setAt) re-arms. Resets naturally on extension reload —
+// the correct "once per session" boundary.
+let lastNotifiedPressureSetAt = 0;
 
 const SECRET_API_KEY = 'memoryai.apiKey';
 
@@ -49,13 +58,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     api = new ApiClient(settings, async () => {
         const k = await context.secrets.get(SECRET_API_KEY);
         return k ?? '';
-    }, logger);
+    }, logger, context.extension.packageJSON.version);
 
     statusBar = new StatusBar(settings, logger);
     statusBar.show('disconnected');
 
     installer = new HookInstaller(host, logger);
     health = new HealthMonitor(api, logger);
+    contextMonitor = new ContextMonitor(api, settings, statusBar, logger, host.id === 'kiro');
 
     health.onUpdate((snap: HealthSnapshot) => {
         // Drive status bar from the live health snapshot. All numbers come
@@ -77,11 +87,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         } else {
             statusBar.show('error');
         }
+        // Context-pressure bridge: the model reported critical pressure via
+        // turn-check; surface it through real IDE UI (the model can't suppress
+        // this). On Kiro the local ContextMonitor owns this (it reads Kiro's
+        // exact contextUsagePercentage), so skip the server-snapshot path there
+        // to avoid a double notice. Other hosts still use this bridge.
+        if (host.id !== 'kiro') {
+            handleContextPressure(snap, statusBar, logger);
+        }
     });
 
     context.subscriptions.push(
         vscode.commands.registerCommand('memoryai.connect',
-            () => ConnectPanel.show(context, api, logger, installer, () => health.refresh())),
+            () => ConnectPanel.show(context, api, logger, installer, async () => { contextMonitor.start(); await health.refresh(); })),
         vscode.commands.registerCommand('memoryai.disconnect', () => disconnectFlow(context)),
         vscode.commands.registerCommand('memoryai.showHealth',
             () => HealthPanel.show(context, health, logger)),
@@ -94,18 +112,24 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         vscode.commands.registerCommand('memoryai.configureCompactThreshold',
             () => configureCompactThreshold(api, logger)),
         vscode.commands.registerCommand('memoryai.exportLogs', () => logger.exportLogs()),
+        // Self-test probe (dark command, not in package.json menus). Verifies
+        // whether this host exposes a working "new chat session" command-id and
+        // whether continuity survives a spawn. Manual only — no production flow.
+        vscode.commands.registerCommand('memoryai.debug.probeContext',
+            () => runSpawnProbe(host, api, logger, context)),
         // Internal — used by ConnectPanel after key save to refresh status bar.
         vscode.commands.registerCommand('memoryai.statusbar.refresh', (state: 'connected' | 'disconnected' | 'error') => {
             statusBar.show(state);
         }),
         statusBar,
         health,
+        contextMonitor,
     );
 
     // First-run experience: if no key, open Connect panel directly.
     const existing = await context.secrets.get(SECRET_API_KEY);
     if (!existing) {
-        ConnectPanel.show(context, api, logger, installer, () => health.refresh());
+        ConnectPanel.show(context, api, logger, installer, async () => { contextMonitor.start(); await health.refresh(); });
     } else {
         await api.setApiKey(existing);
         // Status bar stays "disconnected" until the first health snapshot
@@ -121,12 +145,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 endpoint: settings.endpoint(),
                 apiKey: existing,
                 ...settings.guardInputs(),
-            }).catch((e: unknown) =>
-                logger.warn(`Re-wire on activation failed: ${(e as Error).message}`),
-            );
+            }).catch((e: unknown) => {
+                const msg = `Re-wire on activation failed: ${(e as Error).message}`;
+                logger.warn(msg);
+                vscode.window.showWarningMessage(
+                    `MemoryAI: Failed to update config files. Check Output > MemoryAI for details. You may need to reconnect.`,
+                    'Open Output'
+                ).then(action => {
+                    if (action === 'Open Output') {
+                        vscode.commands.executeCommand('memoryai.exportLogs');
+                    }
+                });
+            });
         });
         // Start polling once we have a key.
         health.start();
+        contextMonitor.start();
         logger.info('API key restored from SecretStorage; extension ready.');
     }
 
@@ -137,16 +171,74 @@ export function deactivate(): void {
     logger?.info('MemoryAI deactivating.');
 }
 
+/**
+ * Surface a critical context-pressure episode through real IDE UI.
+ *
+ * This is the reliable replacement for the model-mediated `action_prompt`
+ * notice: a `showWarningMessage` modal + a persistent warning status-bar item.
+ * The model cannot suppress either — they are rendered by VS Code, not echoed
+ * by the agent.
+ *
+ * Dedup: fire the modal at most once per pressure episode (keyed on the
+ * server's `setAt`). The status-bar overlay stays up for the whole episode so
+ * the cue persists after the modal is dismissed; it clears when pressure ends.
+ *
+ * Host gating is automatic: only AI assistant/Cursor/Windsurf run this extension.
+ * Claude Code (CLI, auto-compacts) has no extension polling /v1/stats, so it
+ * never shows this — exactly as intended.
+ */
+function handleContextPressure(snap: HealthSnapshot, bar: StatusBar, log: Logger): void {
+    const p = snap.contextPressure;
+    if (!p || (p.recommendation !== 'compact_now' && p.recommendation !== 'spawn_now')) {
+        // No (or no longer) critical pressure — drop any overlay.
+        bar.setPressure(false);
+        return;
+    }
+
+    // Keep the persistent overlay visible for the whole episode.
+    bar.setPressure(true, p.usagePercent);
+
+    // Modal: once per episode only.
+    if (p.setAt && p.setAt === lastNotifiedPressureSetAt) {
+        return;
+    }
+    lastNotifiedPressureSetAt = p.setAt;
+
+    const pct = p.usagePercent > 0 ? ` (${Math.round(p.usagePercent)}%)` : '';
+    log.info(`context-pressure ${p.recommendation}${pct} — surfacing notice`);
+    vscode.window
+        .showWarningMessage(
+            `MemoryAI: Context is full${pct}. Everything is saved to your brain — ` +
+                `run /compact or open a new chat and I'll restore the full context automatically.`,
+            'Got it',
+        )
+        .then(undefined, (e: unknown) => log.debug(`pressure notice dismissed/failed: ${(e as Error).message}`));
+}
+
 async function disconnectFlow(context: vscode.ExtensionContext): Promise<void> {
-    await context.secrets.delete(SECRET_API_KEY);
-    await api.setApiKey('');
-    statusBar.show('disconnected');
+    // Try unwire first — if it fails, don't delete API key (avoid zombie state)
     try {
         const { removed } = await installer.unwire();
         for (const p of removed) logger.info(`unwired ${p}`);
     } catch (e) {
-        logger.warn(`unwire failed: ${(e as Error).message}`);
+        const msg = `unwire failed: ${(e as Error).message}`;
+        logger.warn(msg);
+        vscode.window.showErrorMessage(
+            `MemoryAI: Failed to remove config files. Check Output > MemoryAI. Disconnect cancelled to avoid orphan state.`,
+            'Open Output'
+        ).then(action => {
+            if (action === 'Open Output') {
+                vscode.commands.executeCommand('memoryai.exportLogs');
+            }
+        });
+        return; // Abort disconnect — don't delete key if unwire failed
     }
+
+    // Unwire succeeded → safe to delete API key
+    await context.secrets.delete(SECRET_API_KEY);
+    await api.setApiKey('');
+    contextMonitor.stop();
+    statusBar.show('disconnected');
     vscode.window.showInformationMessage('MemoryAI disconnected. Memory persistence paused.');
 }
 

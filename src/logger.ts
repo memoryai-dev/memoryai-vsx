@@ -30,7 +30,9 @@ export class Logger {
 
     private write(level: LogLevel, msg: string): void {
         if (!this.should(level)) return;
-        const line = `[${new Date().toISOString()}] [${level.toUpperCase()}] ${msg}`;
+        // Redact sensitive data before logging (API keys, tokens)
+        const redacted = this.redactSecrets(msg);
+        const line = `[${new Date().toISOString()}] [${level.toUpperCase()}] ${redacted}`;
         this.channel.appendLine(line);
         this.buffer.push(line);
         if (this.buffer.length > Logger.BUFFER_MAX) {
@@ -38,9 +40,38 @@ export class Logger {
         }
     }
 
+    private redactSecrets(msg: string): string {
+        // Redact MemoryAI API keys (hm_sk_...)
+        let result = msg.replace(/hm_sk_[A-Za-z0-9_-]+/g, 'hm_sk_***');
+        // Redact Bearer tokens
+        result = result.replace(/Bearer\s+[A-Za-z0-9_-]+/gi, 'Bearer ***');
+        // Redact Authorization header values
+        result = result.replace(/(Authorization[:\s]+)([^\s,}]+)/gi, '$1***');
+        return result;
+    }
+
     error(msg: string): void { this.write('error', msg); }
     warn(msg: string): void { this.write('warn', msg); }
     info(msg: string): void { this.write('info', msg); }
+
+    /** Write straight to the channel regardless of level. For self-test/probe
+     *  output that must always be visible even when logLevel=warn (the default).
+     *  Still redacted + buffered like normal lines, and reveals the panel so the
+     *  tester doesn't have to hunt for it. */
+    raw(msg: string): void {
+        const redacted = this.redactSecrets(msg);
+        const line = `[${new Date().toISOString()}] [PROBE] ${redacted}`;
+        this.channel.appendLine(line);
+        this.buffer.push(line);
+        if (this.buffer.length > Logger.BUFFER_MAX) {
+            this.buffer.splice(0, this.buffer.length - Logger.BUFFER_MAX);
+        }
+    }
+
+    /** Force the Output panel visible on the MemoryAI channel. */
+    reveal(): void {
+        this.channel.show(true);
+    }
     debug(msg: string): void { this.write('debug', msg); }
     trace(msg: string): void { this.write('trace', msg); }
 

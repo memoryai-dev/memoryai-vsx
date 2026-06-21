@@ -1,5 +1,91 @@
 # Changelog
 
+## 0.5.0 — Percent-native context guard + live Kiro usage watch (2026-06-21)
+
+- **Context Guard rebuilt around real fill %.** On Kiro the extension now reads
+  Kiro's own `contextUsagePercentage` from the active session file and compares
+  it directly against the configured thresholds — no more turn-count
+  estimation or guessed token windows. A new background `ContextMonitor` polls
+  the active session every 8s, selects the truly-active session (active flag →
+  activeTabId → highest usage → newest mtime), and acts on the exact number
+  Kiro shows in its UI.
+- **Two percent thresholds, one knob.** `criticalPercent` (force save + the
+  single "context is full" notice) drives everything; the soft `compact` point
+  where silent saving begins is derived automatically at 85% of it. Cross
+  compact → the conversation tail is saved silently to the brain; cross
+  critical → save (if not already) + raise the notice once per episode.
+  Dropping back below compact re-arms for the next climb, and a new session id
+  resets cleanly.
+- **Settings collapsed to two fields.** `memoryai.contextWindow` (200000 /
+  1000000 / any exact number) and `memoryai.criticalPercent` (0 = auto-follow
+  the window: ≤200K → 95, >200K → 30; or 5–99 to override). Removed
+  `memoryai.compactMode`, `memoryai.model`, and `memoryai.compactAtTokens`
+  along with the brittle model-name → window guesser. The Connect panel
+  auto-snaps the critical % when you switch window and shows the derived
+  compact point live.
+- **No double notices.** On Kiro the local monitor owns the notice, so the
+  server-snapshot pressure bridge is skipped there; Cursor / Windsurf / VS Code
+  keep using the existing `/v1/stats` pressure path.
+
+## 0.4.3 — Reliable "context full" notice (2026-06-20)
+
+- The critical "context is full — run /compact or open a new chat" notice no
+  longer depends on the model echoing an `action_prompt`. When the model's
+  turn-check reports critical pressure, the server records it and the extension
+  surfaces it through real IDE UI off its existing 60s `/v1/stats` poll:
+  a `showWarningMessage` modal (once per pressure episode) plus a persistent
+  warning status-bar item that stays until pressure subsides. The model cannot
+  suppress either.
+- Silent-save policy unchanged: `compact_soon`/`safe` stay silent; only
+  `compact_now`/`spawn_now` raise the notice.
+- Claude Code is unaffected — it auto-compacts and runs no extension, so it
+  never shows this notice (by design). Bare-MCP hosts keep the previous
+  best-effort `action_prompt` fallback.
+- Server-side: new in-memory per-tenant pressure ledger (TTL 10m), exposed as
+  an optional `context_pressure` field on `/v1/stats`. Older clients ignore it;
+  older servers omit it (read null-safe).
+
+## 0.4.2 — Shared GuardSettings type (2026-06-19)
+
+- Depend on `@memoryai.dev/core@^1.1.0` for the `GuardSettings` type only
+  (`import type`, fully erased by esbuild). The Context Guard settings shape is
+  now owned by core as the single source of truth shared with claude-cli and
+  the MCP server, so the three clients can't drift apart on its fields. No
+  runtime code from core is bundled — the extension still ships as a pure-JS
+  bundle with no native binary.
+
+## 0.4.1 — Pure-JS bundle (2026-06-18)
+
+- **Removed the native dependency.** The extension no longer declares
+  `@memoryai.dev/core` or `better-sqlite3` (neither was imported — the
+  extension talks to the server directly over `fetch`). esbuild no longer
+  externals `better-sqlite3` and `.vscodeignore` drops the native re-includes.
+- **VSIX size: ~3.7MB → <0.1MB** (no native binary shipped).
+- Status-bar `User-Agent` now reports the real extension version instead of a
+  hardcoded string.
+- Fixed three "Open Output" actions that called an unregistered
+  `memoryai.logs` command; they now call `memoryai.exportLogs`.
+
+## 0.3.0 — Perfect VSX (2025-01-XX)
+
+**8 critical fixes + performance improvements from 20-agent deep code review.**
+
+### Security & Privacy (P0)
+- **Logger redaction**: API keys (`hm_sk_*`), Bearer tokens, and Authorization headers now masked before logging to Output channel and export files. Closes privacy leak.
+- **Webview input validation**: postMessage payload strict type guards (endpoint, compactAtTokens, compactMode). URL whitelist for openExternal (https://memoryai.dev/* only). Prevents type confusion and unauthorized external links.
+
+### Reliability (P1)
+- **Wire fail visibility**: Re-wire on activation errors now show UI warning with "Open Output" button instead of silent fail. User can troubleshoot config drift (permission denied, etc).
+- **Rules template dynamic args**: Inherited from 0.2.5 — buildGuardLine() now passes connect inputs (model, compactAtTokens) into Kiro hook + Cursor/Windsurf rules, so `ide_turn_check` gets the user's actual thresholds instead of hardcoded 200K.
+- **Disconnect atomic rollback**: Unwire runs BEFORE deleting API key. If unwire fails (permission error), disconnect aborts and key stays intact. Prevents zombie state (API key gone, MCP config orphaned).
+
+### Performance (P2)
+- **StatusBar throttle**: `update()` debounced 500ms to prevent UI thrash on burst updates. State changes (connected/disconnected) still immediate.
+- **Save mode feedback**: ConnectPanel shows "compact at X, critical at Y" confirmation when saving manual mode, "auto mode" for auto. User visibility into what's being saved.
+
+### Breaking Changes
+None — all fixes backward-compatible.
+
 ## 0.2.5
 
 - Pass connect inputs (endpoint / api key / model) into the Kiro recall hook

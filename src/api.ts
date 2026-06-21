@@ -1,5 +1,12 @@
 import { Settings } from './settings';
 import { Logger } from './logger';
+// Type-only import: the GuardSettings shape is owned by @memoryai.dev/core (the
+// single source of truth shared with claude-cli + the MCP server). `import type`
+// is fully erased at build time, so esbuild bundles nothing from core and the
+// extension's own request() pipeline (version header + logging) stays in charge.
+import type { GuardSettings } from '@memoryai.dev/core';
+
+export type { GuardSettings };
 
 /**
  * Thin client over the MemoryAI HTTP API.
@@ -58,16 +65,22 @@ export interface StatsResponse {
     brain_age_days?: number | null;
     last_dream_at?: string | null;
     dna_count?: number | null;
+    /** Context-pressure bridge — non-null only when the model recently
+     *  reported critical context pressure via turn-check. Lets the extension
+     *  fire a reliable UI warning off its existing /v1/stats poll. Older
+     *  servers omit it (read null-safe). */
+    context_pressure?: {
+        recommendation: 'compact_now' | 'spawn_now' | string;
+        estimated_tokens: number;
+        critical_at_tokens: number;
+        usage_percent: number;
+        set_at: number;
+    } | null;
 }
 
-/** /v1/context/guard/settings — server-owned per-tenant overrides. */
-export interface GuardSettings {
-    plan: string;
-    defaults: { compact_at_tokens: number; critical_at_tokens: number };
-    user_overrides: { compact_at_tokens: number | null; critical_at_tokens: number | null };
-    effective: { compact_at_tokens: number; critical_at_tokens: number };
-    explanation?: Record<string, string>;
-}
+/** /v1/context/guard/settings — server-owned per-tenant overrides.
+ *  The GuardSettings shape is imported from @memoryai.dev/core above so the
+ *  three clients (cli / vsx / mcp) can never drift apart on its fields. */
 
 export class ApiClient {
     private apiKey = '';
@@ -75,6 +88,7 @@ export class ApiClient {
         private settings: Settings,
         private keyProvider: () => Promise<string>,
         private log: Logger,
+        private version: string = '0.0.0',
     ) {}
 
     async setApiKey(key: string): Promise<void> {
@@ -131,8 +145,29 @@ export class ApiClient {
         return r.ok;
     }
 
-    async bootstrap(task: string, limit = 10): Promise<{ context_block: string; tokens_used: number; memories_restored: number } | null> {
-        const r = await this.request('POST', '/v1/ide/guard/bootstrap', { task, limit });
+    /** Tail-save-only: deliver raw tail messages to the B5 buffer without
+     *  triggering a compact (empty content → server returns status=tail_saved).
+     *  Mirrors what claude-cli's precompact-runner does. Returns the server
+     *  status string (e.g. "tail_saved") or null on failure. */
+    async saveTail(
+        sessionId: string,
+        tailMessages: Array<{ role: string; content: string }>,
+        projectId?: string,
+    ): Promise<{ ok: boolean; status: string; raw: string }> {
+        const r = await this.request('POST', '/v1/ide/guard/compact', {
+            content: '',
+            session_id: sessionId,
+            tail_messages: tailMessages,
+            project_id: projectId ?? null,
+            blocking: false,
+        });
+        let status = '';
+        try { status = (JSON.parse(r.body) as { status?: string }).status ?? ''; } catch { /* ignore */ }
+        if (!r.ok) this.log.warn(`saveTail ${r.status}: ${r.body.slice(0, 200)}`);
+        return { ok: r.ok, status, raw: r.body.slice(0, 300) };
+    }
+
+    async bootstrap(task: string, limit = 10): Promise<{ context_block: string; tokens_used: number; memories_restored: number } | null> {        const r = await this.request('POST', '/v1/ide/guard/bootstrap', { task, limit });
         if (!r.ok) {
             this.log.warn(`bootstrap ${r.status}: ${r.body.slice(0, 200)}`);
             return null;
@@ -250,7 +285,7 @@ export class ApiClient {
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${this.apiKey}`,
-                'User-Agent': 'memoryai-vsx/0.1.0',
+                'User-Agent': `memoryai-vsx/${this.version}`,
             },
             signal: AbortSignal.timeout(20_000),
         };

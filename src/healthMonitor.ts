@@ -50,6 +50,16 @@ export interface HealthSnapshot {
     lastDreamAt: string | null;
     /** Count of DNA-protected memories (preference/decision/identity/pitfall/procedure). */
     dnaCount: number | null;
+    /** Context-pressure episode reported by the model via turn-check.
+     *  null when no (or stale) critical pressure. Drives the reliable UI
+     *  notice (showWarningMessage) the model can't suppress. */
+    contextPressure: {
+        recommendation: string;
+        estimatedTokens: number;
+        criticalAtTokens: number;
+        usagePercent: number;
+        setAt: number;
+    } | null;
 }
 
 export class HealthMonitor implements vscode.Disposable {
@@ -126,6 +136,15 @@ export class HealthMonitor implements vscode.Disposable {
                 brainAgeDays: typeof r.brain_age_days === 'number' ? r.brain_age_days : null,
                 lastDreamAt: typeof r.last_dream_at === 'string' && r.last_dream_at.length > 0 ? r.last_dream_at : null,
                 dnaCount: typeof r.dna_count === 'number' ? r.dna_count : null,
+                contextPressure: r.context_pressure
+                    ? {
+                          recommendation: r.context_pressure.recommendation,
+                          estimatedTokens: r.context_pressure.estimated_tokens ?? 0,
+                          criticalAtTokens: r.context_pressure.critical_at_tokens ?? 0,
+                          usagePercent: r.context_pressure.usage_percent ?? 0,
+                          setAt: r.context_pressure.set_at ?? 0,
+                      }
+                    : null,
             };
             this.last = snap;
             this.fire(snap);

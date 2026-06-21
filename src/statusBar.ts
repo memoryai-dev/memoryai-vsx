@@ -23,6 +23,12 @@ export class StatusBar implements vscode.Disposable {
     private brainAgeDays: number | null = null;
     private dnaCount: number | null = null;
     private lastDreamAt: string | null = null;
+    private renderTimeout?: NodeJS.Timeout;
+    // Context-pressure overlay — when active, the bar shows a warning regardless
+    // of style/state so the "compact now" signal stays visible after the modal
+    // is dismissed. Cleared when pressure subsides.
+    private pressureActive = false;
+    private pressurePct = 0;
 
     constructor(private settings: Settings, private log: Logger) {
         this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -36,6 +42,11 @@ export class StatusBar implements vscode.Disposable {
         this.item.command = state === 'disconnected' || state === 'error'
             ? 'memoryai.connect'
             : 'memoryai.showSavings';
+        // Immediate render for state changes (connected/disconnected/error)
+        if (this.renderTimeout) {
+            clearTimeout(this.renderTimeout);
+            this.renderTimeout = undefined;
+        }
         this.render();
         this.item.show();
     }
@@ -62,15 +73,50 @@ export class StatusBar implements vscode.Disposable {
         if (opts.brainAgeDays !== undefined) this.brainAgeDays = opts.brainAgeDays;
         if (opts.dnaCount !== undefined) this.dnaCount = opts.dnaCount;
         if (opts.lastDreamAt !== undefined) this.lastDreamAt = opts.lastDreamAt;
+
+        // Throttle render to 500ms — prevent UI thrash if healthMonitor bursts updates
+        if (this.renderTimeout) {
+            clearTimeout(this.renderTimeout);
+        }
+        this.renderTimeout = setTimeout(() => {
+            this.render();
+            this.renderTimeout = undefined;
+        }, 500);
+    }
+
+    /** Set/clear the context-pressure overlay. When active the bar turns into
+     *  a warning the user keeps seeing until they compact. Click → showSavings
+     *  (Brain Health) as usual; the warning text is the cue to /compact. */
+    setPressure(active: boolean, usagePercent = 0): void {
+        this.pressureActive = active;
+        this.pressurePct = usagePercent;
+        if (this.renderTimeout) {
+            clearTimeout(this.renderTimeout);
+            this.renderTimeout = undefined;
+        }
         this.render();
+        this.item.show();
     }
 
     private render(): void {
         const style = this.settings.statusBar();
-        if (style === 'off') {
+        if (style === 'off' && !this.pressureActive) {
             this.item.hide();
             return;
         }
+        // Pressure overlay wins over normal rendering (but not over
+        // disconnected/error which the user must fix first).
+        if (this.pressureActive && (this.current === 'connected' || this.current === 'rotating')) {
+            const pct = this.pressurePct > 0 ? ` (${Math.round(this.pressurePct)}%)` : '';
+            this.item.text = `$(warning) MemoryAI · Context full${pct} — /compact`;
+            this.item.tooltip =
+                'Context is full and saved to your brain.\n' +
+                'Run /compact or open a new chat — MemoryAI restores the full context automatically.';
+            this.item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+            return;
+        }
+        // Not under pressure — clear any warning background we may have set.
+        this.item.backgroundColor = undefined;
         const dollar = this.savedToday.toFixed(2);
         const ICON = '$(database)';
         let text = '';
