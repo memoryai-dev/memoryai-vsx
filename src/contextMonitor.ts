@@ -24,6 +24,7 @@ import { Logger } from './logger';
 import { ApiClient } from './api';
 import { Settings } from './settings';
 import { StatusBar } from './statusBar';
+import { HostAdapter, runHostCommand } from './host';
 import { findActiveSession, readTail, KiroSessionInfo } from './kiroSession';
 
 const POLL_MS = 8_000;
@@ -37,15 +38,26 @@ export class ContextMonitor implements vscode.Disposable {
     // De-dup state, keyed on the active session id.
     private armedSessionId = '';
     private savedAtCompact = false;
+    private savedAtCritical = false;
     private notifiedAtCritical = false;
+    private spawnedForSession = false;
+    // Layer-2 flush safety: the last mtime we saw for the active session. The
+    // spawn only fires once the file is STABLE (same mtime across two polls),
+    // proving Kiro has flushed the final turn to disk — otherwise saveTail
+    // could ship a tail missing the most recent (and most important) turn.
+    private lastSeenMtime = 0;
 
     constructor(
         private api: ApiClient,
         private settings: Settings,
         private statusBar: StatusBar,
         private log: Logger,
-        private isKiro: boolean,
+        private host: HostAdapter,
     ) {}
+
+    private get isKiro(): boolean {
+        return this.host.id === 'kiro';
+    }
 
     start(): void {
         if (this.timer || !this.isKiro) return;
@@ -85,6 +97,7 @@ export class ContextMonitor implements vscode.Disposable {
             }
 
             this.rearmIfNewSession(session);
+            const stable = this.isStable(session);
 
             const compactPct = this.settings.compactPercent();
             const criticalPct = this.settings.criticalPercent();
@@ -102,6 +115,7 @@ export class ContextMonitor implements vscode.Disposable {
                     this.statusBar.setPressure(false);
                 }
                 this.savedAtCompact = false;
+                this.savedAtCritical = false;
                 this.notifiedAtCritical = false;
                 return;
             }
@@ -113,15 +127,27 @@ export class ContextMonitor implements vscode.Disposable {
             }
 
             if (level === 'critical') {
-                // Make sure the brain has the latest tail even if compact was
-                // skipped (fast climb straight past the soft point).
-                if (!this.savedAtCompact) {
-                    await this.saveSilently(session, usage);
-                    this.savedAtCompact = true;
-                }
                 if (!this.notifiedAtCritical) {
                     this.notifyFull(usage);
                     this.notifiedAtCritical = true;
+                }
+                // Save a FRESH tail at critical — distinct from the compact save,
+                // which is now stale (turns between compact% and critical% would
+                // otherwise be lost). Gate on stability so the tail includes the
+                // final flushed turn. Re-uses savedAtCritical so we save once.
+                if (!this.savedAtCritical) {
+                    if (!stable) {
+                        this.log.debug('ContextMonitor: critical but file not yet stable — defer save one poll.');
+                    } else {
+                        await this.saveSilently(session, usage);
+                        this.savedAtCritical = true;
+                    }
+                }
+                // Auto-spawn (design B): only at the IDLE turn boundary AND once
+                // the FRESH critical tail is saved (so the new session resumes
+                // from the true latest turn, not the stale compact snapshot).
+                if (this.savedAtCritical) {
+                    await this.maybeSpawn(session, usage);
                 }
             }
         } catch (e) {
@@ -141,9 +167,21 @@ export class ContextMonitor implements vscode.Disposable {
         if (session.sessionId && session.sessionId !== this.armedSessionId) {
             this.armedSessionId = session.sessionId;
             this.savedAtCompact = false;
+            this.savedAtCritical = false;
             this.notifiedAtCritical = false;
+            this.spawnedForSession = false;
+            this.lastSeenMtime = 0;
             this.statusBar.setPressure(false);
         }
+    }
+
+    /** Layer-2 flush check: the file is "stable" when its mtime hasn't changed
+     *  since the previous poll, i.e. Kiro finished writing the latest turn.
+     *  Updates the tracked mtime as a side effect. */
+    private isStable(session: KiroSessionInfo): boolean {
+        const stable = this.lastSeenMtime !== 0 && session.mtime === this.lastSeenMtime;
+        this.lastSeenMtime = session.mtime;
+        return stable;
     }
 
     /** Silent save: ship the conversation tail to the B5 buffer. No user-visible
@@ -163,19 +201,22 @@ export class ContextMonitor implements vscode.Disposable {
     }
 
     /** Raise the single "context is full" cue through the status-bar overlay.
-     *  The model can't suppress this — VS Code renders it. */
+     *  The model can't suppress this — VS Code renders it. Wording depends on
+     *  whether auto-spawn will take over: with auto-spawn on, the fresh chat
+     *  opens by itself at the idle boundary, so we say so rather than telling
+     *  the user to act. */
     private notifyFull(usage: number): void {
         this.statusBar.setPressure(true, usage);
-        this.log.info(`ContextMonitor: critical at ${usage.toFixed(1)}% — surfaced context-full notice.`);
-        vscode.window
-            .showWarningMessage(
-                `MemoryAI: Context is full (${Math.round(usage)}%). Everything is saved to your brain — ` +
-                    `open a new chat and I'll restore the full context automatically and continue where we left off.`,
-                'Got it',
-            )
-            .then(undefined, () => {
-                /* dismissed */
-            });
+        const auto = this.settings.autoSpawn();
+        this.log.info(`ContextMonitor: critical at ${usage.toFixed(1)}% — surfaced context-full notice (autoSpawn=${auto}).`);
+        const msg = auto
+            ? `MemoryAI: Context is full (${Math.round(usage)}%). Everything is saved — ` +
+              `I'll open a fresh chat as soon as the current turn finishes and continue where we left off.`
+            : `MemoryAI: Context is full (${Math.round(usage)}%). Everything is saved to your brain — ` +
+              `open a new chat and I'll restore the full context automatically and continue where we left off.`;
+        vscode.window.showWarningMessage(msg, 'Got it').then(undefined, () => {
+            /* dismissed */
+        });
     }
 
     private projectId(): string | undefined {
@@ -183,5 +224,40 @@ export class ContextMonitor implements vscode.Disposable {
         if (!ws) return undefined;
         const base = ws.split(/[\\/]/).filter(Boolean).pop();
         return base || undefined;
+    }
+
+    /**
+     * Auto-spawn a fresh session at the idle turn boundary (design B).
+     *
+     * Guards, all required:
+     *   • auto-spawn enabled in settings,
+     *   • not already spawned for this session,
+     *   • agent is idle: it just finished answering (lastRole === 'assistant')
+     *     and isn't gathering context / awaiting clarification (busy === false).
+     *
+     * The tail is already saved (critical branch saved it), so the new
+     * session's recall + bootstrap hook resumes the in-progress work. We run
+     * the host's verified `newSession` command; on success the old session
+     * stops being active and the next poll re-arms on the new session id.
+     */
+    private async maybeSpawn(session: KiroSessionInfo, usage: number): Promise<void> {
+        if (!this.settings.autoSpawn()) return;
+        if (this.spawnedForSession) return;
+        if (session.busy || session.lastRole !== 'assistant') {
+            this.log.debug(
+                `ContextMonitor: critical but not idle (lastRole=${session.lastRole || '∅'} ` +
+                    `busy=${session.busy}) — defer spawn to the turn boundary.`,
+            );
+            return;
+        }
+        this.spawnedForSession = true;
+        const ok = await runHostCommand(this.host, 'newSession', {});
+        this.log.info(
+            `ContextMonitor: auto-spawn at ${usage.toFixed(1)}% (idle boundary) → ${ok ? 'spawned' : 'command failed'}.`,
+        );
+        if (ok) {
+            // Clear the pressure overlay — the new session starts clean.
+            this.statusBar.setPressure(false);
+        }
     }
 }

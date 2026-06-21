@@ -2,7 +2,7 @@
   "name": "memoryai-vsx",
   "displayName": "MemoryAI",
   "description": "One brain. Every AI you use. Forever. Shared long-term memory for Claude, Cursor, AI assistant, and any IDE that follows.",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "publisher": "memoryai",
   "homepage": "https://memoryai.dev",
   "repository": {
@@ -107,6 +107,12 @@
           "default": false,
           "order": 6,
           "description": "Local-only mode for NDA / regulated data. Reserved for a future release."
+        },
+        "memoryai.autoSpawn": {
+          "type": "boolean",
+          "default": true,
+          "order": 5,
+          "description": "Kiro only. When the live conversation reaches the Critical fill level, automatically open a fresh chat at the next idle turn boundary (after the agent finishes answering). Everything is saved first, so the new chat restores full context via recall + bootstrap and continues where you left off. Turn off to keep the manual 'open a new chat' notice instead."
         },
         "memoryai.statusBar": {
           "type": "string",

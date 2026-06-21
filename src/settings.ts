@@ -90,6 +90,13 @@ export class Settings {
         return this.cfg.get<boolean>('privateMode', false);
     }
 
+    /** Auto-spawn a fresh chat at the idle turn boundary when context hits
+     *  critical (Kiro only). Default on — the save already happened, so the
+     *  new session resumes the work via recall + bootstrap. */
+    autoSpawn(): boolean {
+        return this.cfg.get<boolean>('autoSpawn', true);
+    }
+
     statusBar(): 'off' | 'savings' | 'tokens' | 'compact' | 'full' {
         return this.cfg.get<'off' | 'savings' | 'tokens' | 'compact' | 'full'>('statusBar', 'full');
     }

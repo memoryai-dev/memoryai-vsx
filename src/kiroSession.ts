@@ -33,6 +33,12 @@ export interface KiroSessionInfo {
     activeTabId: string;
     historyLength: number;
     mtime: number;
+    /** Role of the last user/assistant message in history ('' if none). When
+     *  this is 'assistant' the agent has produced its answer. */
+    lastRole: string;
+    /** True when the agent is mid-work (gathering context / awaiting a
+     *  clarification). Used to detect the idle turn boundary for auto-spawn. */
+    busy: boolean;
 }
 
 export interface TailMessage {
@@ -98,14 +104,28 @@ function readSessionInfo(file: string): KiroSessionInfo | null {
     const pct = typeof parsed?.contextUsagePercentage === 'number'
         ? parsed.contextUsagePercentage
         : -1;
+    // Last user/assistant role in history — 'assistant' means the agent has
+    // finished its answer (turn boundary). Tool-only trailing entries are
+    // skipped so we read the real conversational role.
+    let lastRole = '';
+    const history: any[] = Array.isArray(parsed?.history) ? parsed.history : [];
+    for (let i = history.length - 1; i >= 0; i--) {
+        const r = history[i]?.message?.role;
+        if (r === 'user' || r === 'assistant') { lastRole = r; break; }
+    }
+    const busy = parsed?.isGatheringContext === true
+        || parsed?.hasPendingIntentClarification === true
+        || parsed?.ttsActive === true;
     return {
         file,
         sessionId: typeof parsed?.sessionId === 'string' ? parsed.sessionId : '',
         contextUsagePercentage: pct,
         active: parsed?.active === true,
         activeTabId: typeof parsed?.activeTabId === 'string' ? parsed.activeTabId : '',
-        historyLength: Array.isArray(parsed?.history) ? parsed.history.length : 0,
+        historyLength: history.length,
         mtime,
+        lastRole,
+        busy,
     };
 }
 
@@ -138,14 +158,18 @@ export function findActiveSession(wsPath: string): KiroSessionInfo | null {
     if (infos.length === 0) return null;
 
     infos.sort((a, b) => {
-        if (a.active !== b.active) return a.active ? -1 : 1;
+        // Primary signal: newest mtime — the file Kiro is actively writing is
+        // the session the user is in right now. On-disk `active` is unreliable
+        // (often false for every file) and the old "highest ctx" tiebreaker
+        // actively chose WRONG: it stuck to whichever session was fullest,
+        // which after an auto-spawn is the OLD, abandoned session (already at
+        // its ceiling) rather than the fresh one the user moved to.
+        if (b.mtime !== a.mtime) return b.mtime - a.mtime;
+        // Same mtime (rare): prefer the one whose tab is focused, then fuller.
         const aTab = a.activeTabId && a.activeTabId === a.sessionId ? 1 : 0;
         const bTab = b.activeTabId && b.activeTabId === b.sessionId ? 1 : 0;
         if (aTab !== bTab) return bTab - aTab;
-        if (b.contextUsagePercentage !== a.contextUsagePercentage) {
-            return b.contextUsagePercentage - a.contextUsagePercentage;
-        }
-        return b.mtime - a.mtime;
+        return b.contextUsagePercentage - a.contextUsagePercentage;
     });
 
     return infos[0];

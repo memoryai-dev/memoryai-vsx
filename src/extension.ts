@@ -65,7 +65,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     installer = new HookInstaller(host, logger);
     health = new HealthMonitor(api, logger);
-    contextMonitor = new ContextMonitor(api, settings, statusBar, logger, host.id === 'kiro');
+    contextMonitor = new ContextMonitor(api, settings, statusBar, logger, host);
 
     health.onUpdate((snap: HealthSnapshot) => {
         // Drive status bar from the live health snapshot. All numbers come

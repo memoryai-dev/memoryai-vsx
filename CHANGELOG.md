@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.1 — Auto-spawn + active-session fix (2026-06-21)
+
+- **Auto-spawn at the idle turn boundary (Kiro).** When the live conversation
+  hits the Critical fill level, the extension now opens a fresh chat by itself
+  — but only after the agent has finished answering (lastRole=assistant, not
+  gathering/clarifying) AND the session file is stable across two polls (Kiro
+  flushed the last turn). The tail is saved first, so the new chat resumes via
+  recall + bootstrap. New `memoryai.autoSpawn` setting (default on); turn off to
+  keep the manual "open a new chat" notice.
+- **Fixed active-session selection.** The monitor picked the session with the
+  highest contextUsagePercentage, which after a spawn was the OLD, abandoned
+  session sitting at its ceiling — so a fresh session never tripped the guard.
+  Selection now prefers newest mtime (the file Kiro is actively writing), since
+  on-disk `active` is unreliable.
+- **Fixed stale-tail on spawn.** Critical now saves a FRESH tail (separate from
+  the earlier compact save) before spawning, so turns between the compact% and
+  critical% crossings are no longer lost from the resumed session.
+
 ## 0.5.0 — Percent-native context guard + live Kiro usage watch (2026-06-21)
 
 - **Context Guard rebuilt around real fill %.** On Kiro the extension now reads
